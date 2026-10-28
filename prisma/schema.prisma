@@ -1,0 +1,1398 @@
+// ICE School Manager — Prisma schema (MySQL)
+// All monetary values use DECIMAL(12,2) to avoid floating point errors.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ────────────────────────────── School / settings ──────────────────────────────
+
+model Setting {
+  id           Int       @id @default(1)
+  name         String    @db.VarChar(150)
+  address      String?   @db.Text
+  phone        String?   @db.VarChar(40)
+  email        String?   @db.VarChar(150)
+  session      String    @default("2026-27") @db.VarChar(20)
+  headerText   String?   @db.VarChar(150)
+  footerText   String?   @db.Text
+  captcha      Boolean   @default(false)
+  waMessage    String?   @db.Text
+  fileTypes    String?   @db.Text
+  planName     String?   @db.VarChar(60)
+  planExpires  DateTime? @db.Date
+  profilePhone Boolean   @default(true)
+  profileAddr  Boolean   @default(true)
+  profileEmail Boolean   @default(true)
+  profilePhoto Boolean   @default(false)
+  updatedAt    DateTime  @updatedAt
+
+  @@map("settings")
+}
+
+model AcademicSession {
+  id        String   @id @default(cuid())
+  name      String   @unique @db.VarChar(20)
+  createdAt DateTime @default(now())
+
+  @@map("academic_sessions")
+}
+
+model SchoolClass {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(60)
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  sections         ClassSection[]
+  students         Student[]
+  feeMasters       FeeMaster[]
+  enquiries        Enquiry[]
+  onlineAdmissions OnlineAdmission[]
+  multiClasses     MultiClass[]
+  examSchedules    ExamSchedule[]
+  lessons          Lesson[]
+  lessonPlans      LessonPlan[]
+  questions        Question[]
+  onlineExams      OnlineExam[]
+  homework         Homework[]
+  contents         Content[]
+  subjectGroups    SubjectGroup[]
+
+  @@index([order])
+  @@map("classes")
+}
+
+model Section {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(30)
+  createdAt DateTime @default(now())
+
+  classes     ClassSection[]
+  students    Student[]
+  multiClasses MultiClass[]
+  homework    Homework[]
+  subjectGroups SubjectGroupSection[]
+
+  @@map("sections")
+}
+
+model ClassSection {
+  classId   String
+  sectionId String
+  class     SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  section   Section     @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@id([classId, sectionId])
+  @@map("class_sections")
+}
+
+model Subject {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(80)
+  code      String?  @db.VarChar(20)
+  type      String   @default("Theory") @db.VarChar(20)
+  createdAt DateTime @default(now())
+
+  examSchedules    ExamSchedule[]
+  lessons          Lesson[]
+  lessonPlans      LessonPlan[]
+  questions        Question[]
+  onlineExams      OnlineExam[]
+  homework         Homework[]
+  subjectGroupItems SubjectGroupSubject[]
+
+  @@map("subjects")
+}
+
+model SubjectGroup {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(80)
+  classId   String?
+  class     SchoolClass? @relation(fields: [classId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  sections SubjectGroupSection[]
+  subjects SubjectGroupSubject[]
+
+  @@map("subject_groups")
+}
+
+model SubjectGroupSection {
+  groupId   String
+  sectionId String
+  group     SubjectGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  section   Section      @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, sectionId])
+  @@map("subject_group_sections")
+}
+
+model SubjectGroupSubject {
+  groupId   String
+  subjectId String
+  group     SubjectGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  subject   Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, subjectId])
+  @@map("subject_group_subjects")
+}
+
+model StudentCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique @db.VarChar(60)
+  desc      String?  @db.Text
+  students  Student[]
+
+  @@map("student_categories")
+}
+
+model StudentHouse {
+  id       String    @id @default(cuid())
+  name     String    @unique @db.VarChar(60)
+  desc     String?   @db.Text
+  students Student[]
+
+  @@map("student_houses")
+}
+
+model DisableReason {
+  id       String    @id @default(cuid())
+  name     String    @unique @db.VarChar(120)
+  desc     String?   @db.Text
+  students Student[] @relation("StudentDisableReason")
+
+  @@map("disable_reasons")
+}
+
+// ────────────────────────────── Students ──────────────────────────────
+
+model Student {
+  id             String    @id @default(cuid())
+  admNo          String    @unique @db.VarChar(32)
+  rollNo         String?   @db.VarChar(20)
+  name           String    @db.VarChar(120)
+  gender         String    @default("Male") @db.VarChar(16)
+  classId        String?
+  sectionId      String?
+  dob            DateTime? @db.Date
+  admDate        DateTime  @default(dbgenerated("(curdate())")) @db.Date
+  categoryId     String?
+  houseId        String?
+  disReasonId    String?
+  father         String?   @db.VarChar(120)
+  mother         String?   @db.VarChar(120)
+  phone          String?   @db.VarChar(20)
+  email          String?   @db.VarChar(150)
+  address        String?   @db.Text
+  photo          String?   @db.LongText
+  status         String    @default("active") @db.VarChar(16)
+  portalPassword String?   @db.VarChar(60)
+  custom         Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  class      SchoolClass?    @relation(fields: [classId], references: [id], onDelete: Restrict)
+  section    Section?        @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  category   StudentCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  house      StudentHouse?   @relation(fields: [houseId], references: [id], onDelete: SetNull)
+  disReason  DisableReason?  @relation("StudentDisableReason", fields: [disReasonId], references: [id], onDelete: SetNull)
+
+  payments          Payment[]
+  carryForwards     CarryForward[]
+  bankPayments      BankPayment[]
+  attendance        StudentAttendance[]
+  leaves            StudentLeave[]
+  multiClasses      MultiClass[]
+  examResults       ExamResult[]
+  onlineResults     OnlineExamResult[]
+  homeworkSubs      HomeworkSubmission[]
+  hostelAllocations HostelAllocation[]
+  transportAssign   TransportAssignment[]
+
+  @@index([classId, sectionId, status])
+  @@index([name])
+  @@index([phone])
+  @@map("students")
+}
+
+model Counter {
+  key   String @id @db.VarChar(30)
+  value Int    @default(0)
+
+  @@map("counters")
+}
+
+// ────────────────────────────── Fees ──────────────────────────────
+
+model FeeGroup {
+  id        String      @id @default(cuid())
+  name      String      @unique @db.VarChar(80)
+  desc      String?     @db.Text
+  createdAt DateTime    @default(now())
+  masters   FeeMaster[]
+
+  @@map("fee_groups")
+}
+
+model FeeType {
+  id        String      @id @default(cuid())
+  name      String      @db.VarChar(80)
+  code      String?     @db.VarChar(20)
+  desc      String?     @db.Text
+  masters   FeeMaster[]
+
+  @@map("fee_types")
+}
+
+model FeeDiscount {
+  id     String  @id @default(cuid())
+  name   String  @db.VarChar(100)
+  code   String? @db.VarChar(20)
+  type   String  @default("Fixed") @db.VarChar(12)
+  amount Decimal @default(0) @db.Decimal(12, 2)
+
+  @@map("fee_discounts")
+}
+
+model FeeMaster {
+  id        String    @id @default(cuid())
+  groupId   String
+  typeId    String
+  classId   String
+  label     String?   @db.VarChar(80)
+  amount    Decimal   @db.Decimal(12, 2)
+  due       DateTime? @db.Date
+  fine      Decimal   @default(0) @db.Decimal(12, 2)
+  createdAt DateTime  @default(now())
+
+  group FeeGroup    @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  type  FeeType     @relation(fields: [typeId], references: [id], onDelete: Restrict)
+  class SchoolClass @relation(fields: [classId], references: [id], onDelete: Restrict)
+
+  @@index([classId])
+  @@map("fee_masters")
+}
+
+model Payment {
+  id        String   @id @default(cuid())
+  rc        String   @unique @db.VarChar(32)
+  studentId String
+  feeKey    String   @db.VarChar(80)
+  amount    Decimal  @db.Decimal(12, 2)
+  discount  Decimal  @default(0) @db.Decimal(12, 2)
+  fine      Decimal  @default(0) @db.Decimal(12, 2)
+  mode      String   @db.VarChar(30)
+  date      DateTime @db.Date
+  note      String?  @db.Text
+  createdAt DateTime @default(now())
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, feeKey])
+  @@index([date])
+  @@map("payments")
+}
+
+model CarryForward {
+  id          String   @id @default(cuid())
+  studentId   String
+  fromSession String   @db.VarChar(20)
+  amount      Decimal  @db.Decimal(12, 2)
+  due         DateTime? @db.Date
+  createdAt   DateTime @default(now())
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@map("carry_forwards")
+}
+
+model BankPayment {
+  id        String   @id @default(cuid())
+  studentId String
+  amount    Decimal  @db.Decimal(12, 2)
+  bank      String?  @db.VarChar(120)
+  ref       String   @db.VarChar(80)
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
+  status    String   @default("Pending") @db.VarChar(20)
+  createdAt DateTime @default(now())
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("bank_payments")
+}
+
+model FeeReminder {
+  id     String  @id @default(cuid())
+  name   String  @db.VarChar(120)
+  kind   String  @db.VarChar(20)
+  days   Int     @default(0)
+  sms    Boolean @default(true)
+  email  Boolean @default(false)
+  wa     Boolean @default(false)
+  active Boolean @default(true)
+
+  @@map("fee_reminders")
+}
+
+// ────────────────────────────── HR ──────────────────────────────
+
+model Department {
+  id        String   @id @default(cuid())
+  name      String   @unique @db.VarChar(80)
+  desc      String?  @db.Text
+  staff     Staff[]
+
+  @@map("departments")
+}
+
+model Designation {
+  id        String   @id @default(cuid())
+  name      String   @unique @db.VarChar(80)
+  desc      String?  @db.Text
+  staff     Staff[]
+
+  @@map("designations")
+}
+
+model LeaveType {
+  id        String       @id @default(cuid())
+  name      String       @db.VarChar(80)
+  days      Int          @default(0)
+  staffLeaves StaffLeave[]
+
+  @@map("leave_types")
+}
+
+model Staff {
+  id        String   @id @default(cuid())
+  empId     String   @unique @db.VarChar(32)
+  name      String   @db.VarChar(120)
+  desigId   String?
+  deptId    String?
+  gender    String?  @db.VarChar(16)
+  phone     String?  @db.VarChar(20)
+  email     String?  @db.VarChar(150)
+  joinDate  DateTime? @db.Date
+  basic     Decimal  @default(0) @db.Decimal(12, 2)
+  status    String   @default("active") @db.VarChar(16)
+  address   String?  @db.Text
+  qual      String?  @db.VarChar(120)
+  createdAt DateTime @default(now())
+
+  designation Designation? @relation(fields: [desigId], references: [id], onDelete: SetNull)
+  department  Department?  @relation(fields: [deptId], references: [id], onDelete: SetNull)
+
+  leaves       StaffLeave[]
+  ratings      StaffRating[]
+  payrolls     Payroll[]
+  attendance   StaffAttendance[]
+  lessonPlans  LessonPlan[]
+  itemIssues   ItemIssue[]
+
+  @@index([status])
+  @@map("staff")
+}
+
+model StaffLeave {
+  id        String   @id @default(cuid())
+  staffId   String
+  typeId    String?
+  from      DateTime @db.Date
+  to        DateTime @db.Date
+  reason    String?  @db.Text
+  status    String   @default("Pending") @db.VarChar(20)
+  createdAt DateTime @default(now())
+
+  staff Staff      @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  type  LeaveType? @relation(fields: [typeId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("staff_leaves")
+}
+
+model StaffRating {
+  id        String   @id @default(cuid())
+  staffId   String
+  rating    Int
+  by        String?  @db.VarChar(80)
+  comment   String?  @db.Text
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
+  createdAt DateTime @default(now())
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@map("staff_ratings")
+}
+
+model Payroll {
+  id        String   @id @default(cuid())
+  staffId   String
+  month     String   @db.VarChar(7)
+  basic     Decimal  @db.Decimal(12, 2)
+  allow     Decimal  @default(0) @db.Decimal(12, 2)
+  deduct    Decimal  @default(0) @db.Decimal(12, 2)
+  net       Decimal  @db.Decimal(12, 2)
+  status    String   @default("Generated") @db.VarChar(20)
+  paidDate  DateTime? @db.Date
+  mode      String?  @db.VarChar(30)
+  createdAt DateTime @default(now())
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, month])
+  @@map("payrolls")
+}
+
+model StaffAttendance {
+  id      String   @id @default(cuid())
+  staffId String
+  date    DateTime @db.Date
+  status  String   @default("Present") @db.VarChar(20)
+  note    String?  @db.Text
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, date])
+  @@index([date])
+  @@map("staff_attendance")
+}
+
+// ────────────────────────────── Attendance / leave ──────────────────────────────
+
+model StudentAttendance {
+  id        String   @id @default(cuid())
+  studentId String
+  date      DateTime @db.Date
+  status    String   @default("Present") @db.VarChar(20)
+  note      String?  @db.Text
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, date])
+  @@index([date])
+  @@map("student_attendance")
+}
+
+model StudentLeave {
+  id        String   @id @default(cuid())
+  studentId String
+  from      DateTime @db.Date
+  to        DateTime @db.Date
+  reason    String?  @db.Text
+  status    String   @default("Pending") @db.VarChar(20)
+  createdAt DateTime @default(now())
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("student_leaves")
+}
+
+// ────────────────────────────── Front office ──────────────────────────────
+
+model FrontOfficeSetup {
+  id   String  @id @default(cuid())
+  kind String  @db.VarChar(20)
+  name String  @db.VarChar(120)
+  desc String? @db.Text
+
+  enquirySources Enquiry[]    @relation("EnquirySource")
+  visitorPurposes Visitor[]   @relation("VisitorPurpose")
+  complaintTypes Complaint[]  @relation("ComplaintType")
+
+  @@index([kind])
+  @@map("front_office_setup")
+}
+
+model Enquiry {
+  id        String    @id @default(cuid())
+  name      String    @db.VarChar(120)
+  phone     String    @db.VarChar(20)
+  email     String?   @db.VarChar(150)
+  address   String?   @db.Text
+  desc      String?   @db.Text
+  classId   String?
+  sourceId  String?
+  date      DateTime  @default(dbgenerated("(curdate())")) @db.Date
+  follow    DateTime? @db.Date
+  note      String?   @db.Text
+  status    String    @default("Active") @db.VarChar(20)
+  createdAt DateTime  @default(now())
+
+  class  SchoolClass?      @relation(fields: [classId], references: [id], onDelete: SetNull)
+  source FrontOfficeSetup? @relation("EnquirySource", fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@index([status, follow])
+  @@map("enquiries")
+}
+
+model Visitor {
+  id        String   @id @default(cuid())
+  purposeId String?
+  name      String   @db.VarChar(120)
+  phone     String?  @db.VarChar(20)
+  idCard    String?  @db.VarChar(60)
+  persons   Int      @default(1)
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
+  inTime    String?  @db.VarChar(5)
+  outTime   String?  @db.VarChar(5)
+  note      String?  @db.Text
+  createdAt DateTime @default(now())
+
+  purpose FrontOfficeSetup? @relation("VisitorPurpose", fields: [purposeId], references: [id], onDelete: SetNull)
+
+  @@map("visitors")
+}
+
+model PhoneCall {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(120)
+  phone     String   @db.VarChar(20)
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
+  type      String   @default("Incoming") @db.VarChar(20)
+  desc      String?  @db.Text
+  follow    DateTime? @db.Date
+  duration  String?  @db.VarChar(40)
+  note      String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@map("phone_calls")
+}
+
+model PostalDispatch {
+  id        String   @id @default(cuid())
+  toTitle   String   @db.VarChar(120)
+  refNo     String?  @db.VarChar(60)
+  address   String?  @db.Text
+  fromTitle String?  @db.VarChar(120)
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
+  note      String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@map("postal_dispatch")
+}
+
+model PostalReceive {
+  id        String   @id @default(cuid())
+  fromTitle String   @db.VarChar(120)
+  refNo     String?  @db.VarChar(60)
+  address   String?  @db.Text
+  toTitle   String?  @db.VarChar(120)
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
+  note      String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@map("postal_receive")
+}
+
+model Complaint {
+  id        String   @id @default(cuid())
+  typeId    String?
+  by        String   @db.VarChar(120)
+  phone     String?  @db.VarChar(20)
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
+  desc      String?  @db.Text
+  action    String?  @db.Text
+  note      String?  @db.Text
+  status    String   @default("Pending") @db.VarChar(20)
+  createdAt DateTime @default(now())
+
+  type FrontOfficeSetup? @relation("ComplaintType", fields: [typeId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("complaints")
+}
+
+model OnlineAdmission {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(120)
+  classId   String?
+  gender    String?  @db.VarChar(16)
+  dob       DateTime? @db.Date
+  father    String?  @db.VarChar(120)
+  phone     String   @db.VarChar(20)
+  email     String?  @db.VarChar(150)
+  address   String?  @db.Text
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
+  status    String   @default("Pending") @db.VarChar(20)
+  createdAt DateTime @default(now())
+
+  class SchoolClass? @relation(fields: [classId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("online_admissions")
+}
+
+model MultiClass {
+  id        String   @id @default(cuid())
+  studentId String
+  classId   String
+  sectionId String?
+  createdAt DateTime @default(now())
+
+  student Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  class   SchoolClass  @relation(fields: [classId], references: [id], onDelete: Cascade)
+  section Section?     @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+
+  @@unique([studentId, classId])
+  @@map("multi_class_students")
+}
+
+// ────────────────────────────── Expenses ──────────────────────────────
+
+model ExpenseHead {
+  id       String    @id @default(cuid())
+  name     String    @unique @db.VarChar(80)
+  desc     String?   @db.Text
+  expenses Expense[]
+
+  @@map("expense_heads")
+}
+
+model Expense {
+  id        String   @id @default(cuid())
+  headId    String
+  name      String   @db.VarChar(150)
+  invoice   String?  @db.VarChar(60)
+  amount    Decimal  @db.Decimal(12, 2)
+  date      DateTime @db.Date
+  mode      String   @default("Cash") @db.VarChar(30)
+  note      String?  @db.Text
+  createdAt DateTime @default(now())
+
+  head ExpenseHead @relation(fields: [headId], references: [id], onDelete: Restrict)
+
+  @@index([date])
+  @@map("expenses")
+}
+
+// ────────────────────────────── Exams ──────────────────────────────
+
+model ExamGroup {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(100)
+  session   String   @db.VarChar(20)
+  desc      String?  @db.Text
+  createdAt DateTime @default(now())
+
+  schedules ExamSchedule[]
+
+  @@map("exam_groups")
+}
+
+model ExamSchedule {
+  id        String   @id @default(cuid())
+  groupId   String
+  classId   String
+  subjectId String
+  date      DateTime @db.Date
+  time      String?  @db.VarChar(5)
+  room      String?  @db.VarChar(60)
+  max       Int      @default(50)
+  pass      Int      @default(17)
+  createdAt DateTime @default(now())
+
+  group   ExamGroup   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  class   SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject Subject     @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  results ExamResult[]
+
+  @@index([groupId, classId])
+  @@map("exam_schedules")
+}
+
+model ExamResult {
+  id        String   @id @default(cuid())
+  schedId   String
+  studentId String
+  marks     Decimal  @default(0) @db.Decimal(6, 2)
+  absent    Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+
+  sched   ExamSchedule @relation(fields: [schedId], references: [id], onDelete: Cascade)
+  student Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([schedId, studentId])
+  @@map("exam_results")
+}
+
+model Grade {
+  id     String  @id @default(cuid())
+  name   String  @db.VarChar(10)
+  from   Decimal @db.Decimal(5, 2)
+  to     Decimal @db.Decimal(5, 2)
+  point  Int     @default(0)
+  remark String? @db.VarChar(120)
+
+  @@map("grades")
+}
+
+model Division {
+  id   String  @id @default(cuid())
+  name String  @db.VarChar(40)
+  from Decimal @db.Decimal(5, 2)
+  to   Decimal @db.Decimal(5, 2)
+
+  @@map("divisions")
+}
+
+model AdmitTemplate {
+  id           Int     @id @default(1)
+  title        String  @default("ADMIT CARD") @db.VarChar(80)
+  exam         String? @db.VarChar(150)
+  instructions String? @db.Text
+  sign         String? @db.VarChar(80)
+  updatedAt    DateTime @updatedAt
+
+  @@map("admit_templates")
+}
+
+model MarkTemplate {
+  id      Int      @id @default(1)
+  title   String   @default("REPORT CARD") @db.VarChar(80)
+  remarks String?  @db.Text
+  signL   String?  @db.VarChar(80)
+  signR   String?  @db.VarChar(80)
+  updatedAt DateTime @updatedAt
+
+  @@map("mark_templates")
+}
+
+model OnlineExam {
+  id        String   @id @default(cuid())
+  title     String   @db.VarChar(150)
+  classId   String
+  subjectId String
+  start     DateTime? @db.Date
+  end       DateTime? @db.Date
+  duration  Int      @default(10)
+  passPct   Int      @default(40)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  class   SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject Subject     @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  results OnlineExamResult[]
+
+  @@map("online_exams")
+}
+
+model Question {
+  id        String   @id @default(cuid())
+  classId   String
+  subjectId String
+  question  String   @db.Text
+  a         String   @db.VarChar(255)
+  b         String   @db.VarChar(255)
+  c         String?  @db.VarChar(255)
+  d         String?  @db.VarChar(255)
+  ans       String   @db.VarChar(1)
+  marks     Int      @default(1)
+  createdAt DateTime @default(now())
+
+  class   SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject Subject     @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+
+  @@index([classId, subjectId])
+  @@map("questions")
+}
+
+model OnlineExamResult {
+  id        String   @id @default(cuid())
+  examId    String
+  studentId String
+  score     Int      @default(0)
+  total     Int      @default(0)
+  pct       Decimal  @default(0) @db.Decimal(5, 2)
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
+
+  exam    OnlineExam @relation(fields: [examId], references: [id], onDelete: Cascade)
+  student Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("online_exam_results")
+}
+
+// ────────────────────────────── Lessons ──────────────────────────────
+
+model Lesson {
+  id        String   @id @default(cuid())
+  classId   String
+  subjectId String
+  name      String   @db.VarChar(150)
+  createdAt DateTime @default(now())
+
+  class       SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject     Subject     @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topics      Topic[]
+  lessonPlans LessonPlan[]
+
+  @@index([classId, subjectId])
+  @@map("lessons")
+}
+
+model Topic {
+  id       String    @id @default(cuid())
+  lessonId String
+  name     String    @db.VarChar(200)
+  planDate DateTime? @db.Date
+  status   String    @default("Pending") @db.VarChar(20)
+
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@map("topics")
+}
+
+model LessonPlan {
+  id        String   @id @default(cuid())
+  classId   String
+  subjectId String
+  lessonId  String
+  date      DateTime @db.Date
+  teacherId String?
+  note      String?  @db.Text
+  createdAt DateTime @default(now())
+
+  class   SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject Subject     @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  lesson  Lesson      @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  teacher Staff?      @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+
+  @@map("lesson_plans")
+}
+
+// ────────────────────────────── Communication ──────────────────────────────
+
+model Notice {
+  id        String   @id @default(cuid())
+  title     String   @db.VarChar(200)
+  msg       String   @db.Text
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
+  audience  Json
+  createdAt DateTime @default(now())
+
+  @@map("notices")
+}
+
+model EmailTemplate {
+  id    String @id @default(cuid())
+  title String @db.VarChar(150)
+  body  String @db.Text
+
+  @@map("email_templates")
+}
+
+model SmsTemplate {
+  id    String @id @default(cuid())
+  title String @db.VarChar(150)
+  body  String @db.Text
+
+  @@map("sms_templates")
+}
+
+model ScheduledMessage {
+  id       String   @id @default(cuid())
+  title    String   @db.VarChar(150)
+  channel  String   @db.VarChar(20)
+  audience String   @db.VarChar(40)
+  date     DateTime @db.Date
+  time     String?  @db.VarChar(5)
+  msg      String   @db.Text
+  status   String   @default("Scheduled") @db.VarChar(20)
+  createdAt DateTime @default(now())
+
+  @@map("scheduled_messages")
+}
+
+model MessageLog {
+  id      String   @id @default(cuid())
+  time    DateTime @default(now())
+  channel String   @db.VarChar(20)
+  to      String   @db.VarChar(180)
+  phone   String?  @db.VarChar(180)
+  subject String?  @db.VarChar(200)
+  body    String   @db.Text
+  status  String   @default("Logged") @db.VarChar(20)
+
+  @@index([time])
+  @@map("message_logs")
+}
+
+// ────────────────────────────── Download center ──────────────────────────────
+
+model ContentType {
+  id       String    @id @default(cuid())
+  name     String    @db.VarChar(100)
+  desc     String?   @db.Text
+  contents Content[]
+
+  @@map("content_types")
+}
+
+model Content {
+  id        String   @id @default(cuid())
+  title     String   @db.VarChar(200)
+  typeId    String
+  classId   String?
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
+  valid     DateTime? @db.Date
+  url       String?  @db.VarChar(500)
+  file      String?  @db.LongText
+  fileName  String?  @db.VarChar(200)
+  desc      String?  @db.Text
+  shared    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  type  ContentType  @relation(fields: [typeId], references: [id], onDelete: Restrict)
+  class SchoolClass? @relation(fields: [classId], references: [id], onDelete: SetNull)
+
+  @@map("contents")
+}
+
+// ────────────────────────────── Homework / calendar ──────────────────────────────
+
+model Homework {
+  id        String   @id @default(cuid())
+  classId   String
+  sectionId String?
+  subjectId String
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
+  due       DateTime @db.Date
+  desc      String   @db.Text
+  max       Int      @default(10)
+  createdAt DateTime @default(now())
+
+  class   SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  section Section?    @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  subject Subject     @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  subs    HomeworkSubmission[]
+
+  @@map("homework")
+}
+
+model HomeworkSubmission {
+  id        String   @id @default(cuid())
+  homeworkId String
+  studentId String
+  done      Boolean  @default(false)
+  marks     Int?
+
+  homework Homework @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
+  student  Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([homeworkId, studentId])
+  @@map("homework_submissions")
+}
+
+model SchoolEvent {
+  id    String   @id @default(cuid())
+  title String   @db.VarChar(200)
+  date  DateTime @db.Date
+  time  String?  @db.VarChar(5)
+  place String?  @db.VarChar(150)
+  note  String?  @db.Text
+
+  @@index([date])
+  @@map("school_events")
+}
+
+// ────────────────────────────── Library ──────────────────────────────
+
+model Book {
+  id        String   @id @default(cuid())
+  title     String   @db.VarChar(200)
+  no        String?  @db.VarChar(40)
+  isbn      String?  @db.VarChar(40)
+  publisher String?  @db.VarChar(120)
+  author    String?  @db.VarChar(120)
+  subject   String?  @db.VarChar(80)
+  rack      String?  @db.VarChar(20)
+  qty       Int      @default(1)
+  price     Decimal  @default(0) @db.Decimal(12, 2)
+  date      DateTime? @db.Date
+  createdAt DateTime @default(now())
+
+  issues BookIssue[]
+
+  @@index([title])
+  @@map("books")
+}
+
+model LibraryMember {
+  id     String @id @default(cuid())
+  kind   String @db.VarChar(16)
+  refId  String @db.VarChar(40)
+  card   String @unique @db.VarChar(40)
+  issues BookIssue[]
+
+  @@index([kind, refId])
+  @@map("library_members")
+}
+
+model BookIssue {
+  id       String    @id @default(cuid())
+  memberId String
+  bookId   String
+  issue    DateTime  @db.Date
+  due      DateTime  @db.Date
+  ret      DateTime? @db.Date
+  createdAt DateTime @default(now())
+
+  member LibraryMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  book   Book          @relation(fields: [bookId], references: [id], onDelete: Restrict)
+
+  @@index([bookId, ret])
+  @@map("book_issues")
+}
+
+// ────────────────────────────── Inventory ──────────────────────────────
+
+model ItemCategory {
+  id    String  @id @default(cuid())
+  name  String  @unique @db.VarChar(80)
+  desc  String? @db.Text
+  items Item[]
+
+  @@map("item_categories")
+}
+
+model ItemStore {
+  id    String  @id @default(cuid())
+  name  String  @db.VarChar(100)
+  code  String? @db.VarChar(20)
+  desc  String? @db.Text
+  stock ItemStock[]
+
+  @@map("item_stores")
+}
+
+model ItemSupplier {
+  id      String  @id @default(cuid())
+  name    String  @db.VarChar(150)
+  contact String? @db.VarChar(120)
+  phone   String? @db.VarChar(20)
+  address String? @db.Text
+  desc    String? @db.Text
+  stock   ItemStock[]
+
+  @@map("item_suppliers")
+}
+
+model Item {
+  id       String  @id @default(cuid())
+  name     String  @db.VarChar(150)
+  catId    String
+  unit     String? @db.VarChar(30)
+  desc     String? @db.Text
+  category ItemCategory @relation(fields: [catId], references: [id], onDelete: Restrict)
+  stock    ItemStock[]
+  issues   ItemIssue[]
+
+  @@map("items")
+}
+
+model ItemStock {
+  id         String   @id @default(cuid())
+  itemId     String
+  supId      String?
+  storeId    String?
+  qty        Int      @default(0)
+  price      Decimal  @default(0) @db.Decimal(12, 2)
+  date       DateTime @default(dbgenerated("(curdate())")) @db.Date
+  purchaseNo String?  @db.VarChar(60)
+  desc       String?  @db.Text
+  createdAt  DateTime @default(now())
+
+  item  Item          @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  supplier ItemSupplier? @relation(fields: [supId], references: [id], onDelete: SetNull)
+  store ItemStore?    @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
+  @@index([itemId])
+  @@map("item_stock")
+}
+
+model ItemIssue {
+  id      String    @id @default(cuid())
+  itemId  String
+  staffId String?
+  qty     Int
+  issue   DateTime  @db.Date
+  ret     DateTime? @db.Date
+  status  String    @default("Issued") @db.VarChar(20)
+  note    String?   @db.Text
+  createdAt DateTime @default(now())
+
+  item  Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  staff Staff? @relation(fields: [staffId], references: [id], onDelete: SetNull)
+
+  @@index([itemId, status])
+  @@map("item_issues")
+}
+
+// ────────────────────────────── Transport ──────────────────────────────
+
+model TransportRoute {
+  id         String   @id @default(cuid())
+  name       String   @db.VarChar(120)
+  desc       String?  @db.Text
+  createdAt  DateTime @default(now())
+
+  pickups     RoutePickup[]
+  assignments VehicleAssignment[]
+  students    TransportAssignment[]
+
+  @@map("transport_routes")
+}
+
+model Vehicle {
+  id       String  @id @default(cuid())
+  number   String  @unique @db.VarChar(40)
+  model    String? @db.VarChar(80)
+  year     String? @db.VarChar(10)
+  driver   String? @db.VarChar(120)
+  phone    String? @db.VarChar(20)
+  licence  String? @db.VarChar(40)
+  capacity Int     @default(0)
+  assignments AssignmentVehicle[]
+
+  @@map("vehicles")
+}
+
+model PickupPoint {
+  id      String  @id @default(cuid())
+  name    String  @db.VarChar(150)
+  routes  RoutePickup[]
+  fees    TransportFee[]
+  students TransportAssignment[]
+
+  @@map("pickup_points")
+}
+
+model RoutePickup {
+  id       String  @id @default(cuid())
+  routeId  String
+  pickupId String
+  time     String? @db.VarChar(5)
+
+  route  TransportRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  pickup PickupPoint    @relation(fields: [pickupId], references: [id], onDelete: Cascade)
+
+  @@unique([routeId, pickupId])
+  @@map("route_pickups")
+}
+
+model VehicleAssignment {
+  id      String   @id @default(cuid())
+  routeId String
+  route   TransportRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  vehicles AssignmentVehicle[]
+
+  @@map("vehicle_assignments")
+}
+
+model AssignmentVehicle {
+  assignmentId String
+  vehicleId    String
+  assignment   VehicleAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  vehicle      Vehicle           @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@id([assignmentId, vehicleId])
+  @@map("assignment_vehicles")
+}
+
+model TransportFee {
+  id         String  @id @default(cuid())
+  pickupId   String
+  monthlyFee Decimal @db.Decimal(12, 2)
+  months     Int     @default(10)
+  fine       Decimal @default(0) @db.Decimal(12, 2)
+
+  pickup PickupPoint @relation(fields: [pickupId], references: [id], onDelete: Cascade)
+
+  @@unique([pickupId])
+  @@map("transport_fees")
+}
+
+model TransportAssignment {
+  id        String    @id @default(cuid())
+  studentId String
+  routeId   String
+  pickupId  String
+  due       DateTime? @db.Date
+  createdAt DateTime  @default(now())
+
+  student Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  route   TransportRoute @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  pickup  PickupPoint    @relation(fields: [pickupId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, pickupId])
+  @@map("transport_assignments")
+}
+
+// ────────────────────────────── Hostel ──────────────────────────────
+
+model Hostel {
+  id      String  @id @default(cuid())
+  name    String  @db.VarChar(150)
+  type    String? @db.VarChar(20)
+  address String? @db.VarChar(200)
+  intake  Int     @default(0)
+  desc    String? @db.Text
+  rooms   Room[]
+
+  @@map("hostels")
+}
+
+model RoomType {
+  id    String  @id @default(cuid())
+  name  String  @unique @db.VarChar(60)
+  desc  String? @db.Text
+  rooms Room[]
+
+  @@map("room_types")
+}
+
+model Room {
+  id       String  @id @default(cuid())
+  hostelId String
+  typeId   String
+  roomNo   String  @db.VarChar(30)
+  beds     Int     @default(1)
+  cost     Decimal @default(0) @db.Decimal(12, 2)
+  desc     String? @db.Text
+
+  hostel     Hostel          @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  type       RoomType        @relation(fields: [typeId], references: [id], onDelete: Restrict)
+  allocations HostelAllocation[]
+
+  @@unique([hostelId, roomNo])
+  @@map("rooms")
+}
+
+model HostelAllocation {
+  id        String   @id @default(cuid())
+  studentId String
+  roomId    String
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
+  createdAt DateTime @default(now())
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  room    Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId])
+  @@map("hostel_allocations")
+}
+
+// ────────────────────────────── Certificates / alumni ──────────────────────────────
+
+model CertificateTemplate {
+  id   String  @id @default(cuid())
+  name String  @db.VarChar(120)
+  body String  @db.Text
+  foot String? @db.VarChar(80)
+
+  @@map("certificate_templates")
+}
+
+model IdCardTemplate {
+  id       Int     @id @default(1)
+  color    String  @default("#1d3a8a") @db.VarChar(20)
+  validity String? @db.VarChar(80)
+  updatedAt DateTime @updatedAt
+
+  @@map("id_card_templates")
+}
+
+model Alumni {
+  id         String  @id @default(cuid())
+  name       String  @db.VarChar(150)
+  year       String? @db.VarChar(10)
+  occupation String? @db.VarChar(120)
+  phone      String? @db.VarChar(20)
+  email      String? @db.VarChar(150)
+  address    String? @db.Text
+  note       String? @db.Text
+
+  @@map("alumni")
+}
+
+model AlumniEvent {
+  id    String    @id @default(cuid())
+  title String    @db.VarChar(150)
+  from  DateTime  @db.Date
+  to    DateTime? @db.Date
+  place String?   @db.VarChar(150)
+  note  String?   @db.Text
+
+  @@map("alumni_events")
+}
+
+// ────────────────────────────── System ──────────────────────────────
+
+model CustomField {
+  id   String @id @default(cuid())
+  name String @db.VarChar(80)
+  for  String @default("Student") @db.VarChar(30)
+  type String @default("Text") @db.VarChar(20)
+
+  @@map("custom_fields")
+}
+
+model Language {
+  id      String  @id @default(cuid())
+  name    String  @db.VarChar(60)
+  code    String  @unique @db.VarChar(10)
+  enabled Boolean @default(true)
+
+  @@map("languages")
+}
+
+model Role {
+  id    String    @id @default(cuid())
+  name  String    @unique @db.VarChar(40)
+  perms Json
+  users AppUser[]
+}
+
+model AppUser {
+  id           String   @id @default(cuid())
+  name         String   @db.VarChar(120)
+  username     String   @unique @db.VarChar(64)
+  passwordHash String   @db.VarChar(200)
+  role         String   @db.VarChar(40)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  roleRef Role @relation(fields: [role], references: [name], onUpdate: Cascade, onDelete: Restrict)
+
+  @@map("app_users")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  time        DateTime @default(now())
+  user        String   @db.VarChar(64)
+  act         String   @db.VarChar(40)
+  entity      String   @db.VarChar(80)
+  description String?  @db.Text
+
+  @@index([time])
+  @@map("audit_logs")
+}
+
+model UserLog {
+  id    String   @id @default(cuid())
+  time  DateTime @default(now())
+  user  String   @db.VarChar(64)
+  act   String   @db.VarChar(80)
+
+  @@index([time])
+  @@map("user_logs")
+}
