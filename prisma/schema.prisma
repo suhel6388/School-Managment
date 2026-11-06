@@ -1,5 +1,8 @@
-// ICE School Manager — Prisma schema (PostgreSQL, shared database / shared schema multi-tenant)
+// ICE School Manager — Prisma schema (MySQL 8, shared database / shared schema multi-tenant)
 // All monetary values use DECIMAL(12,2) to avoid floating point errors.
+//
+// The PostgreSQL variant of this schema is kept in prisma/postgres/schema.prisma
+// for deployments that target PostgreSQL.
 //
 // Tenant rule:
 //   - Every school-owned row carries `schoolId`.
@@ -14,7 +17,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -157,7 +160,7 @@ model User {
 model Session {
   id        String   @id
   expiresAt DateTime
-  token     String   @unique @db.Text
+  token     String   @unique @db.VarChar(255)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   ipAddress String?  @db.VarChar(64)
@@ -457,7 +460,7 @@ model Student {
   classId        String?
   sectionId      String?
   dob            DateTime? @db.Date
-  admDate        DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  admDate        DateTime  @default(dbgenerated("(curdate())")) @db.Date
   categoryId     String?
   houseId        String?
   disReasonId    String?
@@ -635,7 +638,7 @@ model BankPayment {
   amount    Decimal  @db.Decimal(12, 2)
   bank      String?  @db.VarChar(120)
   ref       String   @db.VarChar(80)
-  date      DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
   status    String   @default("Pending") @db.VarChar(20)
   createdAt DateTime @default(now())
 
@@ -775,7 +778,7 @@ model StaffRating {
   rating    Int
   by        String?  @db.VarChar(80)
   comment   String?  @db.Text
-  date      DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
   createdAt DateTime @default(now())
 
   school School @relation(fields: [schoolId], references: [id])
@@ -897,7 +900,7 @@ model Enquiry {
   desc      String?   @db.Text
   classId   String?
   sourceId  String?
-  date      DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime  @default(dbgenerated("(curdate())")) @db.Date
   follow    DateTime? @db.Date
   note      String?   @db.Text
   status    String    @default("Active") @db.VarChar(20)
@@ -921,7 +924,7 @@ model Visitor {
   phone     String?  @db.VarChar(20)
   idCard    String?  @db.VarChar(60)
   persons   Int      @default(1)
-  date      DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
   inTime    String?  @db.VarChar(5)
   outTime   String?  @db.VarChar(5)
   note      String?  @db.Text
@@ -940,7 +943,7 @@ model PhoneCall {
   schoolId  String
   name      String    @db.VarChar(120)
   phone     String    @db.VarChar(20)
-  date      DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime  @default(dbgenerated("(curdate())")) @db.Date
   type      String    @default("Incoming") @db.VarChar(20)
   desc      String?   @db.Text
   follow    DateTime? @db.Date
@@ -962,7 +965,7 @@ model PostalDispatch {
   refNo     String?  @db.VarChar(60)
   address   String?  @db.Text
   fromTitle String?  @db.VarChar(120)
-  date      DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
   note      String?  @db.Text
   createdAt DateTime @default(now())
 
@@ -980,7 +983,7 @@ model PostalReceive {
   refNo     String?  @db.VarChar(60)
   address   String?  @db.Text
   toTitle   String?  @db.VarChar(120)
-  date      DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
   note      String?  @db.Text
   createdAt DateTime @default(now())
 
@@ -997,7 +1000,7 @@ model Complaint {
   typeId    String?
   by        String   @db.VarChar(120)
   phone     String?  @db.VarChar(20)
-  date      DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
   desc      String?  @db.Text
   action    String?  @db.Text
   note      String?  @db.Text
@@ -1024,7 +1027,7 @@ model OnlineAdmission {
   phone     String    @db.VarChar(20)
   email     String?   @db.VarChar(150)
   address   String?   @db.Text
-  date      DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime  @default(dbgenerated("(curdate())")) @db.Date
   status    String    @default("Pending") @db.VarChar(20)
   createdAt DateTime  @default(now())
 
@@ -1270,7 +1273,7 @@ model OnlineExamResult {
   score     Int      @default(0)
   total     Int      @default(0)
   pct       Decimal  @default(0) @db.Decimal(5, 2)
-  date      DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
 
   school  School     @relation(fields: [schoolId], references: [id])
   exam    OnlineExam @relation(fields: [schoolId, examId], references: [schoolId, id], onDelete: Cascade)
@@ -1348,7 +1351,7 @@ model Notice {
   schoolId  String
   title     String   @db.VarChar(200)
   msg       String   @db.Text
-  date      DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
   audience  Json
   createdAt DateTime @default(now())
 
@@ -1445,7 +1448,7 @@ model Content {
   title     String    @db.VarChar(200)
   typeId    String
   classId   String?
-  date      DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime  @default(dbgenerated("(curdate())")) @db.Date
   valid     DateTime? @db.Date
   url       String?   @db.VarChar(500)
   file      String?   @db.Text
@@ -1471,7 +1474,7 @@ model Homework {
   classId   String
   sectionId String?
   subjectId String
-  date      DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
   due       DateTime @db.Date
   desc      String   @db.Text
   max       Int      @default(10)
@@ -1662,7 +1665,7 @@ model ItemStock {
   storeId    String?
   qty        Int      @default(0)
   price      Decimal  @default(0) @db.Decimal(12, 2)
-  date       DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date       DateTime @default(dbgenerated("(curdate())")) @db.Date
   purchaseNo String?  @db.VarChar(60)
   desc       String?  @db.Text
   createdAt  DateTime @default(now())
@@ -1900,7 +1903,7 @@ model HostelAllocation {
   schoolId  String
   studentId String
   roomId    String
-  date      DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  date      DateTime @default(dbgenerated("(curdate())")) @db.Date
   createdAt DateTime @default(now())
 
   school  School  @relation(fields: [schoolId], references: [id])

@@ -1,10 +1,10 @@
-# Phase 2 — Multi-Tenant Database Architecture
+# Phase 2 — Multi-Tenant Database Architecture (MySQL)
 
-Status: **schema and migration artifacts prepared; nothing applied to a database.**
+Status: **MySQL schema and migrations prepared and verified on a temporary
+database. The production `school_db` has not been touched.**
 
-This document describes the shared-database / shared-schema tenant model, the
-constraints that enforce isolation, and the safe path for moving the existing
-single-school MySQL installation to PostgreSQL without deleting records.
+This is the active Phase 2 target. The original PostgreSQL design is retained in
+`docs/phase2-postgresql-variant.md` and `prisma/postgres/`.
 
 ---
 
@@ -12,7 +12,7 @@ single-school MySQL installation to PostgreSQL without deleting records.
 
 | Item | Value |
 | --- | --- |
-| Database | PostgreSQL 16+ |
+| Database | MySQL 8.0+ |
 | ORM | Prisma 6.19.3 |
 | Tenancy model | Shared database, shared schema |
 | Tenant key | `schoolId` on every school-owned table |
@@ -22,19 +22,20 @@ single-school MySQL installation to PostgreSQL without deleting records.
 
 All tenant-owned rows have:
 
-1. `schoolId` as a required column.
+1. `schoolId` as a required (`NOT NULL`) column.
 2. A foreign key `schoolId -> schools.id`.
-3. A single-column index on `schoolId` (or a composite index/PK that starts
-   with `schoolId`).
+3. An index on `schoolId`.
 4. Composite foreign keys for every relation to another tenant-owned row:
    `[schoolId, <fk>] -> [<parent>.schoolId, <parent>.id]`.
 5. A composite unique constraint `[schoolId, id]` when referenced by those
    composite foreign keys.
 6. Uniqueness scoped per school instead of globally.
+7. A `BEFORE UPDATE` trigger that rejects changing `schoolId`.
 
-PostgreSQL therefore rejects a row that points at another school's record even
-if application code has a bug. The application must still filter every query
-by the authenticated `schoolId` (Phase 4).
+MySQL therefore rejects a row that points at another school's record, and
+rejects moving a row between schools, even if application code has a bug. The
+application must still filter every query by the authenticated `schoolId`
+(Phase 4).
 
 ---
 
@@ -43,27 +44,26 @@ by the authenticated `schoolId` (Phase 4).
 ### `schools` (`School`)
 
 ```
-id                cuid primary key
-name              varchar(150)
-slug              varchar(80) unique
-email             varchar(150) nullable
-phone             varchar(40)  nullable
-address           text         nullable
-logo              text         nullable
-status            varchar(20)  default "active"
-subscriptionPlan  varchar(40)  default "free"
-createdAt         timestamp
-updatedAt         timestamp
+id                VARCHAR(191) primary key (cuid)
+name              VARCHAR(150)
+slug              VARCHAR(80) unique
+email             VARCHAR(150) nullable
+phone             VARCHAR(40)  nullable
+address           TEXT         nullable
+logo              TEXT         nullable
+status            VARCHAR(20)  default 'active'
+subscriptionPlan  VARCHAR(40)  default 'free'
+createdAt         DATETIME(3)
+updatedAt         DATETIME(3)
 ```
 
 `status` is intended to use `active`, `suspended`, `cancelled`. School deletion
-is deliberately not part of normal APIs; tenancy offboarding should use
-`status` and an explicit admin runbook.
+is deliberately not part of normal APIs; use `status` and an admin runbook.
 
 ### Better Auth core tables
 
-Table names intentionally match Better Auth defaults: `user`, `session`,
-`account`, `verification`.
+Table names match Better Auth defaults: `user`, `session`, `account`,
+`verification`.
 
 | Table | Purpose |
 | --- | --- |
@@ -72,36 +72,31 @@ Table names intentionally match Better Auth defaults: `user`, `session`,
 | `account` | Credentials and OAuth accounts; password hash lives here |
 | `verification` | Email verification / password reset tokens |
 
-`User` does **not** store a password. Credentials belong to `account`
-(`providerId = "credential"`), as required by Better Auth.
+`User` does not store a password. Credentials belong to `account`
+(`providerId = "credential"`).
 
 ### `school_memberships` (`SchoolMembership`)
 
 ```
-id         cuid primary key
+id         VARCHAR(191) primary key
 schoolId   -> schools.id
 userId     -> user.id
-role       varchar(40) default "member"
-status     varchar(20) default "active"
-createdAt  timestamp
-updatedAt  timestamp
+role       VARCHAR(40) default 'member'
+status     VARCHAR(20) default 'active'
+createdAt  DATETIME(3)
+updatedAt  DATETIME(3)
 
 unique (schoolId, userId)
 index  (schoolId, status)
 index  (userId)
 ```
 
-This is the server-side source of truth for "which school may this user
-access". Better Auth's organization plugin tables can be layered on in Phase 3;
-the requested `SchoolMembership` contract is already represented here.
-
 ---
 
 ## 3. Tenant tables
 
-All 97 pre-existing models are tenant-owned. This includes lookup/settings
-tables, logs, roles, languages and counters — they are configuration of one
-school, not platform-wide data.
+All 97 pre-existing models are tenant-owned, including configuration, logs,
+roles, languages and counters.
 
 ```
 settings, academic_sessions, classes, sections, class_sections, subjects,
@@ -171,20 +166,20 @@ the primary key.
 
 ### Restructured singleton tables
 
-The legacy `id = 1` singleton pattern cannot work with multiple schools.
+* `settings`, `admit_templates`, `mark_templates`, `id_card_templates` keep an
+  auto-increment `id` primary key and add `schoolId` (`UNIQUE`). One row per
+  school is enforced.
+* `counters` now has composite primary key `(schoolId, key)`.
 
-* `settings`, `admit_templates`, `mark_templates`, `id_card_templates`
-  keep an auto-increment `id` primary key and add `schoolId String @unique`.
-  One row per school is enforced by the unique `schoolId`.
-* `counters` now has composite primary key `(schoolId, key)`, so each school
-  has its own receipt/admission sequence.
+### MySQL-specific type changes
 
-### Tenant key immutability
-
-A PostgreSQL trigger (`prevent_tenant_reassignment`) is attached to every table
-with a `schoolId` column. Any `UPDATE` that changes `schoolId` raises
-`42501` (insufficient privilege), including updates attempted outside the
-application. Rows must be inserted with the correct school from the start.
+* `Session.token` uses `VARCHAR(255)` instead of `TEXT`, because MySQL cannot
+  create a unique index on `TEXT` (the original P1012 error).
+* Date defaults use `dbgenerated("(curdate())")` instead of PostgreSQL's
+  `CURRENT_DATE`.
+* `@db.Text` is retained only on non-indexed text columns.
+* All per-school unique indexes fit inside MySQL's 3072-byte InnoDB limit with
+  `utf8mb4`.
 
 ### Referential actions
 
@@ -196,68 +191,91 @@ reference by setting the optional FK column to `NULL` before deleting the
 parent. Required relations keep their original `CASCADE`/`RESTRICT` semantics,
 and `schools` deletion is `RESTRICT` for tenant data.
 
+### Tenant key immutability
+
+MySQL does not support a conditional trigger body without `BEGIN ... END` and
+`DELIMITER`, which Prisma migrations cannot reliably carry. The baseline uses a
+single-statement trigger per tenant table:
+
+```sql
+CREATE TRIGGER `students_school_id_immutable`
+BEFORE UPDATE ON `students`
+FOR EACH ROW
+SET NEW.`schoolId` = IF(NEW.`schoolId` <=> OLD.`schoolId`, NEW.`schoolId`, NULL);
+```
+
+Changing `schoolId` assigns `NULL` to a `NOT NULL` column, so MySQL aborts the
+update with `Column 'schoolId' cannot be null`. Keeping the same value is
+allowed. There are 98 triggers (97 tenant tables + `school_memberships`).
+
 ---
 
 ## 5. Generated artifacts
 
 | File | Purpose |
 | --- | --- |
-| `prisma/schema.prisma` | PostgreSQL multi-tenant schema (103 models) |
-| `prisma/migrations/20261106000000_init_postgresql_multitenant/migration.sql` | Baseline DDL generated from the schema (96 KB, 184 FKs) |
-| `prisma/migrations/20261106000001_tenant_school_id_immutable/migration.sql` | Trigger that blocks changing `schoolId` on all 98 tenant tables |
-| `prisma/migrations/migration_lock.toml` | `provider = "postgresql"` |
-| `prisma/migrations-mysql-archive/` | Original MySQL migration preserved unchanged |
-| `prisma/schema.mysql.legacy.prisma` | Pre-migration MySQL schema kept for transition/rollback |
-| `prisma/sql/tenant-integrity-checks.sql` | Post-import isolation/coverage checks |
+| `prisma/schema.prisma` | Active MySQL 8 multi-tenant schema (103 models) |
+| `prisma/migrations/20261106000000_init_mysql_multitenant/migration.sql` | 103 tables, 184 foreign keys |
+| `prisma/migrations/20261106000001_tenant_school_id_immutable/migration.sql` | 98 `schoolId` immutability triggers |
+| `prisma/migrations/migration_lock.toml` | `provider = "mysql"` |
+| `prisma/migrations-mysql-archive/` | Original single-tenant MySQL migration, preserved |
+| `prisma/schema.mysql.legacy.prisma` | Original single-tenant schema, used by the current app |
+| `prisma/sql/tenant-integrity-checks.sql` | MySQL post-import isolation checks |
+| `prisma/postgres/` | Archived PostgreSQL schema, migrations and checks |
+| `docs/phase2-postgresql-variant.md` | PostgreSQL design document |
 
-The baseline is an **empty-database baseline**. It is not an in-place upgrade
-for the existing MySQL schema.
+The baseline is an **empty-database baseline**. It is not an in-place upgrade of
+the existing `school_db`.
 
 ---
 
 ## 6. Safe migration strategy
 
 The existing installation already contains records that must not be deleted.
-The only safe path is a **parallel PostgreSQL database + verified data copy +
-cutover**, not an in-place provider switch.
+The only safe path is a **new MySQL database + verified data copy + cutover**.
 
 ### Phase A — Freeze and back up
 
 1. Announce a maintenance window; stop application writes.
 2. Take a full MySQL backup:
-   `mysqldump --single-transaction --routines --triggers --events <db> > backup-before-pg.sql`
+   `mysqldump --single-transaction --routines --triggers --events school_db > backup-before-mt.sql`
 3. Record row counts for every table.
-4. Keep the backup read-only until PostgreSQL verification passes.
+4. Keep the backup read-only until verification passes.
 
-### Phase B — Provision PostgreSQL
+### Phase B — Create a new database
 
-1. Install PostgreSQL 16+; create a dedicated role and database.
-2. Store credentials only in the runtime environment:
-   `DATABASE_URL="postgresql://.../ice_school?schema=public"`
-3. Ensure UTF-8 encoding and a timezone policy (`UTC` recommended).
-4. Do not enable `schoolId` defaults and do not create a wildcard tenant.
+1. Create a fresh database, for example `school_db_mt`.
+2. Point a staging/runtime `DATABASE_URL` at it:
+   `mysql://USER:PASSWORD@localhost:3306/school_db_mt`
+3. Do not point the new schema at `school_db`.
 
-### Phase C — Build and verify the empty schema
+### Phase C — Apply and verify the empty schema
 
-1. On a staging PostgreSQL database:
-   `npx prisma migrate deploy`
-2. Confirm 103 tables, 184 foreign keys, and 98 immutability triggers exist.
-3. Run `prisma/sql/tenant-integrity-checks.sql`; the FK-coverage query must
-   return no rows and the trigger check must report 98 / 98 with no missing
-   table.
-4. Run the application test suite against staging once Phase 3/4 code exists.
+```powershell
+$env:DATABASE_URL = "mysql://USER:PASSWORD@localhost:3306/school_db_mt"
+npx prisma migrate deploy
+```
+
+Do **not** use `prisma migrate dev` against `school_db`; it can prompt for a
+reset. `migrate deploy` only applies the two committed migrations.
+
+Verify:
+
+1. 103 tables, 184 foreign keys and 98 triggers exist.
+2. `prisma/sql/tenant-integrity-checks.sql` returns:
+   * no missing/nulled `schoolId` columns,
+   * no tenant FK without `schoolId`,
+   * trigger count 98 / 98 with no missing table.
 
 ### Phase D — Create the legacy tenant
 
-The current installation becomes exactly one school. Choose a stable id (a
-cuid or a fixed value such as `legacy`), and insert it before importing any
-tenant rows:
+The current installation becomes exactly one school:
 
 ```sql
-INSERT INTO "schools" ("id", "name", "slug", "email", "phone", "address",
-                       "status", "subscriptionPlan", "createdAt", "updatedAt")
+INSERT INTO `schools` (`id`, `name`, `slug`, `email`, `phone`, `address`,
+                       `status`, `subscriptionPlan`, `createdAt`, `updatedAt`)
 VALUES ('legacy', 'ICE School', 'ice-school', '<email>', '<phone>', '<address>',
-        'active', 'legacy', now(), now());
+        'active', 'legacy', NOW(3), NOW(3));
 ```
 
 Every imported row uses `schoolId = 'legacy'`.
@@ -266,42 +284,34 @@ Every imported row uses `schoolId = 'legacy'`.
 
 Recommended approach: stage the old rows, then transform into the new schema.
 
-1. Export each MySQL table to CSV/TSV in FK-safe order.
-2. Create temporary staging tables in PostgreSQL that mirror the MySQL columns.
-3. `COPY` the exports into staging tables.
-4. Insert into the final tables with an explicit constant `schoolId`:
+1. Export each source table to CSV/TSV in FK-safe order.
+2. Load the exports into staging tables in `school_db_mt`.
+3. Insert into the final tables with an explicit constant `schoolId`:
 
 ```sql
-INSERT INTO "students" ("id", "schoolId", "admNo", ...)
-SELECT "id", 'legacy', "admNo", ... FROM staging_students;
+INSERT INTO `students` (`id`, `schoolId`, `admNo`, ...)
+SELECT `id`, 'legacy', `admNo`, ... FROM staging_students;
 ```
 
-5. Fix the restructured tables:
+4. Fix the restructured tables:
    * `settings`, `admit_templates`, `mark_templates`, `id_card_templates`:
-     set `schoolId = 'legacy'` and keep the existing row as the school's row.
-   * `counters`: insert `('legacy', key, value)`; sequences continue per school.
+     set `schoolId = 'legacy'` and keep the existing row.
+   * `counters`: insert `('legacy', key, value)`.
    * `roles` / `app_users`: keep names/usernames, scoped to `'legacy'`.
-   * `students.admDate`, `bank_payments.date` and other MySQL `curdate()`
-     defaults are ordinary date values after import.
-6. Preserve every primary key. Do not regenerate ids unless a collision is
-   proven; all legacy ids are already unique.
-7. Reset sequences for the four auto-increment tables after importing explicit
-   ids, otherwise the next insert collides with `id = 1`:
+   * Date values imported from MySQL remain ordinary `DATE` values.
+5. Preserve every primary key; all legacy ids are already unique.
+6. The four auto-increment tables receive explicit `id = 1`. MySQL advances the
+   counter after an explicit insert, but confirm it before go-live:
 
 ```sql
-SELECT setval(pg_get_serial_sequence('"settings"', 'id'),
-              COALESCE((SELECT MAX("id") FROM "settings"), 1), true);
-SELECT setval(pg_get_serial_sequence('"admit_templates"', 'id'),
-              COALESCE((SELECT MAX("id") FROM "admit_templates"), 1), true);
-SELECT setval(pg_get_serial_sequence('"mark_templates"', 'id'),
-              COALESCE((SELECT MAX("id") FROM "mark_templates"), 1), true);
-SELECT setval(pg_get_serial_sequence('"id_card_templates"', 'id'),
-              COALESCE((SELECT MAX("id") FROM "id_card_templates"), 1), true);
+SELECT AUTO_INCREMENT FROM information_schema.tables
+WHERE table_schema = 'school_db_mt'
+  AND table_name IN ('settings','admit_templates','mark_templates','id_card_templates');
 ```
 
-8. Import parent tables before children (see order below) or defer constraint
-   validation with a reviewed script. Never drop/truncate source tables.
-9. Insert every row with its final `schoolId`. Do **not** copy first and then
+7. Import parent tables before children (see order below). Never drop or
+   truncate source tables.
+8. Insert every row with its final `schoolId`. Do **not** copy first and then
    `UPDATE ... SET schoolId = ...`; the immutability trigger blocks it.
 
 Suggested import order:
@@ -333,86 +343,83 @@ roles, app_users, audit_logs, user_logs
 
 ### Phase F — Verify before cutover
 
-1. Compare source and target row counts per table; store the results.
+1. Compare source and target row counts per table.
 2. Run `prisma/sql/tenant-integrity-checks.sql`.
 3. Confirm every tenant table has exactly one `schoolId` value (`legacy`).
 4. Spot-check money totals: payments, expenses, payroll, fee masters.
-5. Spot-check high-value relationships: student → class/section, payment →
-   student, exam result → schedule/student, transport assignment → route/pickup.
-6. Run the application's read paths and a small write/rollback test against
+5. Spot-check relationships: student → class/section, payment → student,
+   exam result → schedule/student, transport assignment → route/pickup.
+6. Run the application read paths and a small write/rollback test against
    staging.
 
 ### Phase G — Cutover and rollback
 
-1. Stop the old application; keep MySQL available read-only.
-2. Point `DATABASE_URL` at PostgreSQL.
-3. Start the new build; run smoke tests (login, dashboard, student list,
-   receipt generation, attendance, exam result, report export).
-4. Rollback = stop PostgreSQL-backed app, restore the previous build and the
-   unchanged MySQL `DATABASE_URL`. No source data is modified by the copy, so
-   rollback does not require a restore.
-5. Retain the MySQL backup for the agreed retention period.
+1. Stop the old application; keep `school_db` available read-only.
+2. Point `DATABASE_URL` at `school_db_mt`.
+3. Regenerate the Prisma client for the new schema (`npm run db:generate`) and
+   deploy the tenant-aware application build (Phase 3/4).
+4. Smoke-test login, dashboard, students, receipts, attendance, exams, reports.
+5. Rollback = restore the old build + old `DATABASE_URL` pointing at the
+   untouched `school_db`.
+6. Retain the `mysqldump` backup for the agreed retention period.
 
 ### Guardrails
 
-* Never run `prisma migrate reset`, `db:seed`, `truncateAll`, or
-  `system/reset` against production.
-* Never run the new baseline against the existing MySQL database.
+* Never run `prisma migrate reset`, `db:seed`, `truncateAll`, or `system/reset`
+  against production.
+* Never apply the new baseline to the legacy `school_db`.
 * Never import with a client-supplied `schoolId`; import uses the fixed legacy
   tenant id.
-* Do not drop global unique indexes until the data copy has been validated.
+* Do not disable the immutability triggers outside an audited admin procedure.
 
 ---
 
 ## 7. Application follow-up (Phases 3–4)
 
-During the transition window the application keeps running against the legacy
-MySQL client. The target client is not generated by default until cutover:
+During the transition the current application still uses the single-tenant
+MySQL client and schema:
 
 ```powershell
-# current app against MySQL (transition only)
+# current app against the legacy single-tenant schema
 npm run db:generate:legacy
 
-# collection of the PostgreSQL target client, at cutover
+# multi-tenant MySQL client, at cutover
 npm run db:generate
 ```
 
-The schema is intentionally stricter than the current application code. Until
-the next phases land:
+The multi-tenant schema is intentionally stricter than the current code. Until
+Phases 3–4 land:
 
 * Existing queries using global keys (`where: { name }`, `where: { admNo }`,
-  `where: { key }`, `where: { id: 1 }`) no longer type-check against the
-  generated client.
-* `setting`, `admitTemplate`, `markTemplate`, `idCardTemplate` now require the
-  school scope; the legacy `id` remains for compatibility but must not be used
-  as the tenant selector.
+  `where: { key }`, `where: { id: 1 }`) do not type-check against the new
+  client.
 * `schoolId` must be derived from `SchoolMembership`/session on the server.
   Reject or ignore any `schoolId` in body, query string or headers.
 * The generic resource engine (`src/lib/resources.ts`) must inject `schoolId`
   into every `where`, `create`, `update`, `delete`, count, group and relation
   filter. `schoolId` must be removed from writable fields.
 * `system/reset`, backup/restore and seeding must become tenant-scoped.
-* Better Auth routes and the core tables are ready for Phase 3; existing
-  `AppUser` login stays in place until the migration is tested.
+* Better Auth core tables are ready for Phase 3; existing `AppUser` login stays
+  in place until the migration is tested.
 
 ---
 
-## 8. Verification performed in Phase 2
+## 8. Verification performed
 
 | Check | Result |
 | --- | --- |
-| `prisma validate` against PostgreSQL | Passed |
+| `prisma validate` (MySQL) | Passed |
 | `prisma format` | Passed |
-| `prisma generate` (target PostgreSQL schema) | Passed |
-| `prisma generate` (legacy MySQL schema, transition client) | Passed |
+| Baseline SQL generation | Passed, 103 tables / 184 FKs |
+| Baseline applied to a temporary MySQL database | Passed |
+| 98 immutability triggers applied | Passed |
+| Cross-school `students.classId` insert | Blocked by composite FK |
+| Same-school insert/update | Passed |
+| Changing `schoolId` on an existing row | Blocked by trigger |
 | `tsc --noEmit` | Passed against the legacy transition client |
 | `next build` | Passed against the legacy transition client |
-| Baseline SQL generation (`migrate diff --from-empty`) | Passed, 96 KB |
-| Baseline applied to a live PostgreSQL | **Not run** — no PostgreSQL server is installed locally |
-| Data migration / cutover | **Not run** — requires a PostgreSQL server and approved window |
+| Applied to production `school_db` | **Not run** — intentionally untouched |
 
-The local machine currently runs MySQL 80 only. `.env` was deliberately left
-unchanged; run Prisma commands with a PostgreSQL `DATABASE_URL` override until
-cutover. The build passes because the local Prisma client is generated from
-`prisma/schema.mysql.legacy.prisma`; running `npm run db:generate` switches the
-client to the target schema and will surface the expected Phase 3/4 type errors.
+The temporary databases used for verification were dropped afterwards.
+`prisma migrate status` now reports MySQL (no more P3019), but it still refers to
+the legacy `school_db`; the new migrations are pending there by design.
