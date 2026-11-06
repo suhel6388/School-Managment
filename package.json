@@ -23,7 +23,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:reset": "prisma migrate reset --force",
     "predev": "npm run db:generate",
-    "prebuild": "npm run db:generate"
+    "prebuild": "npm run db:generate",
+    "pretypecheck": "npm run db:generate"
   },
   "dependencies": {
     "@prisma/adapter-mariadb": "7.10.1",
