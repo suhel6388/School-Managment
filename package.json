@@ -13,6 +13,7 @@
     "db:validate": "prisma validate",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
+    "db:generate:legacy": "prisma generate --schema prisma/schema.mysql.legacy.prisma",
     "db:seed": "tsx prisma/seed.ts",
     "db:reset": "prisma migrate reset --force"
   },
