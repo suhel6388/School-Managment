@@ -1,48 +1,16 @@
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/lib/prisma-client";
+import {
+  prismaModelMeta,
+  type PrismaFieldMeta,
+  type PrismaModelMeta,
+} from "./prisma-model-meta";
 import { toYmd } from "./dates";
 
-type FieldMeta = {
-  name: string;
-  kind: string;
-  type: string;
-  isList: boolean;
-  isRequired: boolean;
-  isId: boolean;
-  hasDefaultValue: boolean;
-  isUpdatedAt: boolean;
-  nativeType?: unknown;
-};
-
-type ModelMeta = {
-  fields: FieldMeta[];
-  relations: Record<string, string>;
-};
-
-const models = new Map<string, ModelMeta>();
-
-for (const model of Prisma.dmmf.datamodel.models) {
-  const relations: Record<string, string> = {};
-  for (const field of model.fields) {
-    if (field.kind === "object") relations[field.name] = field.type;
-  }
-  models.set(model.name, {
-    fields: model.fields.map((f) => ({
-      name: f.name,
-      kind: f.kind,
-      type: f.type,
-      isList: f.isList,
-      isRequired: f.isRequired,
-      isId: f.isId,
-      hasDefaultValue: f.hasDefaultValue,
-      isUpdatedAt: f.isUpdatedAt ?? false,
-      nativeType: f.nativeType,
-    })),
-    relations,
-  });
-}
+type FieldMeta = PrismaFieldMeta;
+type ModelMeta = PrismaModelMeta;
 
 export function modelMeta(name: string): ModelMeta {
-  const meta = models.get(name);
+  const meta = prismaModelMeta[name];
   if (!meta) throw new Error(`Unknown Prisma model: ${name}`);
   return meta;
 }

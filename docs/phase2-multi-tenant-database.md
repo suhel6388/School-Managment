@@ -13,7 +13,7 @@ This is the active Phase 2 target. The original PostgreSQL design is retained in
 | Item | Value |
 | --- | --- |
 | Database | MySQL 8.0+ |
-| ORM | Prisma 6.19.3 |
+| ORM | Prisma ORM 7.10.1 (`prisma-client` generator + `@prisma/adapter-mariadb`) |
 | Tenancy model | Shared database, shared schema |
 | Tenant key | `schoolId` on every school-owned table |
 | Tenant resolution | Authenticated session membership (Phase 3/4), never request input |
@@ -223,9 +223,39 @@ allowed. There are 98 triggers (97 tenant tables + `school_memberships`).
 | `prisma/sql/tenant-integrity-checks.sql` | MySQL post-import isolation checks |
 | `prisma/postgres/` | Archived PostgreSQL schema, migrations and checks |
 | `docs/phase2-postgresql-variant.md` | PostgreSQL design document |
+| `prisma.config.ts` | Prisma 7 CLI config for the active MySQL schema (datasource, migrations, seed) |
+| `prisma.postgres.config.ts` | Prisma 7 CLI config for the archived PostgreSQL variant |
+| `src/lib/prisma-client.ts` | Runtime client factory and `@prisma/adapter-mariadb` wiring |
+| `scripts/generate-model-meta.ts` | Emits `src/lib/prisma-model-meta.ts` because Prisma 7 removed `Prisma.dmmf` |
 
 The baseline is an **empty-database baseline**. It is not an in-place upgrade of
 the existing `school_db`.
+
+### Prisma ORM 7 toolchain
+
+The project runs Prisma ORM **7.10.1** against MySQL 8:
+
+* `prisma.config.ts` is the source of truth for CLI operations. It imports
+  `dotenv/config` because Prisma 7 no longer loads `.env` automatically, sets
+  the migrations directory, and registers the seed command.
+* `prisma/schema.prisma` uses the `prisma-client` generator with
+  `output = "../src/generated/prisma"`. Plain TypeScript is generated into the
+  source tree instead of `node_modules`. The folder is git-ignored and recreated
+  by `npm run db:generate` (also run by `predev` and `prebuild`).
+* The application currently imports the legacy single-tenant client from
+  `src/generated/prisma-legacy`. The active multi-tenant client is generated to
+  `src/generated/prisma` and is not wired into the app until Phases 3–4.
+* Runtime connections require a driver adapter. `src/lib/prisma-client.ts`
+  uses `@prisma/adapter-mariadb` and rewrites `mysql://` to `mariadb://`
+  because the MariaDB connector's connection-string parser only accepts the
+  `mariadb://` scheme.
+* `Prisma.dmmf` no longer exists in Prisma 7. `scripts/generate-model-meta.ts`
+  reads the schema with `@prisma/internals` at build time and emits
+  `src/lib/prisma-model-meta.ts`, preserving the generic resource engine's
+  metadata behaviour without a runtime dependency on Prisma internals.
+* At cutover, change the client import in `src/lib/prisma-client.ts` to
+  `../generated/prisma/client` and run
+  `npm run db:generate:meta:multitenant` so metadata includes `schoolId`.
 
 ---
 
@@ -384,7 +414,8 @@ MySQL client and schema:
 npm run db:generate:legacy
 
 # multi-tenant MySQL client, at cutover
-npm run db:generate
+npm run db:generate:multitenant
+npm run db:generate:meta:multitenant
 ```
 
 The multi-tenant schema is intentionally stricter than the current code. Until
@@ -408,14 +439,18 @@ Phases 3–4 land:
 
 | Check | Result |
 | --- | --- |
-| `prisma validate` (MySQL) | Passed |
+| `prisma validate` (MySQL, Prisma ORM 7.10.1) | Passed |
 | `prisma format` | Passed |
-| Baseline SQL generation | Passed, 103 tables / 184 FKs |
-| Baseline applied to a temporary MySQL database | Passed |
+| `prisma generate` (multi-tenant + legacy clients) | Passed, generated into `src/generated/` |
+| `prisma migrate deploy` on a fresh temporary MySQL database (Prisma 7) | Passed |
+| Baseline tables after deploy | 103 app tables + `_prisma_migrations` |
+| Foreign keys | 184 |
 | 98 immutability triggers applied | Passed |
+| `@prisma/adapter-mariadb` connection to the existing MySQL database | Passed (read-only count) |
 | Cross-school `students.classId` insert | Blocked by composite FK |
 | Same-school insert/update | Passed |
 | Changing `schoolId` on an existing row | Blocked by trigger |
+| `Prisma.dmmf` replacement metadata generation | Passed, 97 models |
 | `tsc --noEmit` | Passed against the legacy transition client |
 | `next build` | Passed against the legacy transition client |
 | Applied to production `school_db` | **Not run** — intentionally untouched |

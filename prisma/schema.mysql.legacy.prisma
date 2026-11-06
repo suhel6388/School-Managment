@@ -7,12 +7,12 @@
 // All monetary values use DECIMAL(12,2) to avoid floating point errors.
 
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../src/generated/prisma-legacy"
 }
 
 datasource db {
   provider = "mysql"
-  url      = env("DATABASE_URL")
 }
 
 // ────────────────────────────── School / settings ──────────────────────────────

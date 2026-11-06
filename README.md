@@ -126,7 +126,7 @@ exists, but production refuses to start without a real value.
 
 ```powershell
 npx prisma migrate deploy
-npx prisma generate
+npm run db:generate
 npm run db:seed
 ```
 
@@ -180,9 +180,16 @@ environment. Run `npx prisma migrate deploy` on every deployment, never
 | `npm run db:stop`  | Stop the project-local MySQL                       |
 | `npm run db:validate` | Validate `prisma/schema.prisma`                |
 | `npm run db:migrate`  | Create/apply a development migration           |
-| `npm run db:generate` | Regenerate Prisma Client                       |
+| `npm run db:deploy`   | Apply committed migrations                     |
+| `npm run db:generate` | Regenerate the multi-tenant and legacy Prisma 7 clients plus model metadata |
 | `npm run db:seed`     | Load the deterministic demo dataset            |
-| `npm run db:reset`    | Drop, recreate and re-seed the database         |
+| `npm run db:reset`    | Drop and recreate the database (run `db:seed` afterwards) |
+
+Prisma ORM 7 does not load `.env` automatically and does not run the seed after
+`migrate reset`. The CLI reads its configuration from `prisma.config.ts`, which
+imports `dotenv/config`. Prisma Client is generated as plain TypeScript into
+`src/generated/` (git-ignored) and requires the `@prisma/adapter-mariadb`
+driver adapter at runtime.
 
 ## How the project is organised
 

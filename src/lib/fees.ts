@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/lib/prisma-client";
 import { prisma } from "./prisma";
 import { ApiError } from "./errors";
 import { parseYmd, todayYmd, toYmd } from "./dates";

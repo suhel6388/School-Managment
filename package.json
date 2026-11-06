@@ -11,31 +11,36 @@
     "db:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/db-start.ps1",
     "db:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/db-stop.ps1",
     "db:validate": "prisma validate",
-    "db:migrate": "prisma migrate dev",
+    "db:migrate": "prisma migrate dev && npm run db:generate",
     "db:deploy": "prisma migrate deploy",
-    "db:generate": "prisma generate",
+    "db:generate": "prisma generate && prisma generate --schema prisma/schema.mysql.legacy.prisma && npm run db:generate:meta",
+    "db:generate:multitenant": "prisma generate",
     "db:generate:legacy": "prisma generate --schema prisma/schema.mysql.legacy.prisma",
-    "db:generate:postgres": "prisma generate --schema prisma/postgres/schema.prisma",
-    "db:migrate:postgres": "prisma migrate deploy --schema prisma/postgres/schema.prisma",
+    "db:generate:meta": "tsx scripts/generate-model-meta.ts",
+    "db:generate:meta:multitenant": "tsx scripts/generate-model-meta.ts prisma/schema.prisma",
+    "db:generate:postgres": "prisma generate --config prisma.postgres.config.ts",
+    "db:migrate:postgres": "prisma migrate deploy --config prisma.postgres.config.ts",
     "db:seed": "tsx prisma/seed.ts",
-    "db:reset": "prisma migrate reset --force"
-  },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "db:reset": "prisma migrate reset --force",
+    "predev": "npm run db:generate",
+    "prebuild": "npm run db:generate"
   },
   "dependencies": {
-    "@prisma/client": "6.19.3",
+    "@prisma/adapter-mariadb": "7.10.1",
+    "@prisma/client": "7.10.1",
     "bcryptjs": "3.0.3",
+    "dotenv": "17.2.3",
     "next": "15.5.28",
     "react": "19.1.10",
     "react-dom": "19.1.10",
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@prisma/internals": "7.10.1",
     "@types/node": "^24.0.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
-    "prisma": "6.19.3",
+    "prisma": "7.10.1",
     "tsx": "^4.20.0",
     "typescript": "^5.7.0"
   }

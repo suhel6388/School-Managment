@@ -2,7 +2,7 @@ import { prisma } from "./prisma";
 import { pendingFees } from "./fees";
 import { todayAttendanceSummary } from "./attendance";
 import { lastMonths, parseYmd, toYmd, todayYmd, MON } from "./dates";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/lib/prisma-client";
 
 export async function dashboardData() {
   const now = new Date();

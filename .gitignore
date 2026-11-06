@@ -8,3 +8,8 @@ out/
 next-env.d.ts
 tsconfig.tsbuildinfo
 .mysql/
+
+# Prisma 7 generates plain TypeScript into the source tree.
+# `npm run db:generate` (also run by `predev`/`prebuild`) recreates these.
+src/generated/
+src/lib/prisma-model-meta.ts

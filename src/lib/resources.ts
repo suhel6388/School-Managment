@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/lib/prisma-client";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
 import { ApiError } from "./errors";

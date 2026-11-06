@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/lib/prisma-client";
 import { ApiError } from "./errors";
 
 export { ApiError };

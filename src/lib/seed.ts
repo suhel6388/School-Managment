@@ -1,4 +1,4 @@
-import { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@/lib/prisma-client";
 import bcrypt from "bcryptjs";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -26,9 +26,16 @@ function rng(seed = 7) {
 export async function truncateAll(db: PrismaClient): Promise<void> {
   await db.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS=0");
   try {
-    for (const model of Prisma.dmmf.datamodel.models) {
-      const table = model.dbName ?? model.name;
-      await db.$executeRawUnsafe(`TRUNCATE TABLE \`${table}\``);
+    // Prisma ORM 7 removed `Prisma.dmmf`, so read the table list from MySQL.
+    // `_prisma_migrations` is excluded to keep migration history intact.
+    const tables = await db.$queryRawUnsafe<Array<{ TABLE_NAME: string }>>(
+      "SELECT TABLE_NAME FROM information_schema.tables " +
+        "WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' " +
+        "AND TABLE_NAME <> '_prisma_migrations'",
+    );
+
+    for (const { TABLE_NAME } of tables) {
+      await db.$executeRawUnsafe(`TRUNCATE TABLE \`${TABLE_NAME}\``);
     }
   } finally {
     await db.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS=1");

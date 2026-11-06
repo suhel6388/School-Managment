@@ -4,7 +4,7 @@ import { requirePermission } from "@/lib/auth";
 import { ApiError } from "@/lib/errors";
 import { deleteResource } from "@/lib/resources";
 import { parseYmd, todayYmd, toYmd } from "@/lib/dates";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/lib/prisma-client";
 import bcrypt from "bcryptjs";
 
 type Ctx = { params: Promise<{ action: string }> };
