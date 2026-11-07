@@ -30,6 +30,7 @@ model School {
   logo             String?  @db.Text
   status           String   @default("active") @db.VarChar(20)
   subscriptionPlan String   @default("free") @db.VarChar(40)
+  metadata         Json?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -130,7 +131,8 @@ model School {
   appUsers             AppUser[]
   auditLogs            AuditLog[]
   userLogs             UserLog[]
-  memberships          SchoolMembership[]
+  members              Member[]
+  invitations          Invitation[]
 
   @@index([status])
   @@map("schools")
@@ -148,7 +150,8 @@ model User {
 
   sessions    Session[]
   accounts    Account[]
-  memberships SchoolMembership[]
+  members     Member[]
+  invitationsSent Invitation[] @relation("InvitationInviter")
 
   @@map("user")
 }
@@ -163,6 +166,7 @@ model Session {
   ipAddress String?  @db.VarChar(64)
   userAgent String?  @db.Text
   userId    String
+  activeOrganizationId String? @db.VarChar(191)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -206,7 +210,7 @@ model Verification {
   @@map("verification")
 }
 
-model SchoolMembership {
+model Member {
   id        String   @id @default(cuid())
   schoolId  String
   userId    String
@@ -222,6 +226,26 @@ model SchoolMembership {
   @@index([schoolId, status])
   @@index([userId])
   @@map("school_memberships")
+}
+
+model Invitation {
+  id        String   @id @default(cuid())
+  schoolId  String
+  email     String   @db.VarChar(180)
+  role      String   @db.VarChar(40)
+  status    String   @default("pending") @db.VarChar(20)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  inviterId String
+  teamId    String?  @db.VarChar(191)
+
+  school  School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  inviter User   @relation("InvitationInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, email])
+  @@index([schoolId, status])
+  @@index([email])
+  @@map("invitation")
 }
 
 // ────────────────────────────── School / settings ──────────────────────────────

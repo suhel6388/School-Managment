@@ -3,6 +3,8 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { prisma } from "./prisma";
 import { ApiError } from "./errors";
+import { getBetterAuthIdentity } from "./session";
+import { normalizeRole, uiPermissionsForRole } from "./permissions";
 
 export const SESSION_COOKIE = "ice_session";
 const MAX_AGE = 60 * 60 * 12; // 12 hours
@@ -12,6 +14,11 @@ export type SessionUser = {
   username: string;
   name: string;
   role: string;
+  /** Which authentication system produced this identity. */
+  source?: "legacy" | "better-auth";
+  email?: string;
+  /** Server-resolved active school. Never accepted from request input. */
+  schoolId?: string;
 };
 
 type SessionPayload = SessionUser & { exp: number };
@@ -60,7 +67,23 @@ export function verifySession(token: string | undefined | null): SessionUser | n
 
 export async function getSessionUser(): Promise<SessionUser | null> {
   const store = await cookies();
-  return verifySession(store.get(SESSION_COOKIE)?.value);
+  const legacy = verifySession(store.get(SESSION_COOKIE)?.value);
+  if (legacy) return { ...legacy, source: "legacy" };
+
+  // Transitional union: the legacy cookie keeps existing users signed in,
+  // while accounts created through Better Auth use the organization-backed
+  // membership model.
+  const identity = await getBetterAuthIdentity();
+  if (!identity) return null;
+  return {
+    uid: identity.user.id,
+    username: identity.user.email,
+    name: identity.user.name,
+    role: identity.activeRole,
+    source: "better-auth",
+    email: identity.user.email,
+    schoolId: identity.session.activeOrganizationId ?? undefined,
+  };
 }
 
 export async function requireUser(): Promise<SessionUser> {
@@ -100,6 +123,10 @@ export async function userPermissions(user: SessionUser): Promise<string[] | "al
 
 export async function can(user: SessionUser, group: string): Promise<boolean> {
   if (user.role === "Admin") return true;
+  if (user.source === "better-auth") {
+    const perms = uiPermissionsForRole(normalizeRole(user.role));
+    return perms === "all" || perms.includes(group);
+  }
   const perms = await userPermissions(user);
   return perms === "all" || perms.includes(group);
 }

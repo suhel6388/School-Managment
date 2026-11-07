@@ -15,6 +15,140 @@ datasource db {
   provider = "mysql"
 }
 
+// ─────────────── Better Auth identity / tenancy (Phase 3) ───────────────
+// These tables are additive. Existing AppUser/domain tables are untouched so
+// the legacy username/password login keeps working until the cutover.
+
+// Better Auth organization plugin: `organization` is mapped to School.
+model School {
+  id               String   @id @default(cuid())
+  name             String   @db.VarChar(150)
+  slug             String   @unique @db.VarChar(80)
+  email            String?  @db.VarChar(150)
+  phone            String?  @db.VarChar(40)
+  address          String?  @db.Text
+  logo             String?  @db.Text
+  status           String   @default("active") @db.VarChar(20)
+  subscriptionPlan String   @default("free") @db.VarChar(40)
+  metadata         Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  members     Member[]
+  invitations Invitation[]
+
+  @@index([status])
+  @@map("schools")
+}
+
+model User {
+  id            String   @id
+  name          String   @db.VarChar(150)
+  email         String   @unique @db.VarChar(180)
+  emailVerified Boolean  @default(false)
+  image         String?  @db.Text
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions        Session[]
+  accounts        Account[]
+  members         Member[]
+  invitationsSent Invitation[] @relation("InvitationInviter")
+
+  @@map("user")
+}
+
+model Session {
+  id                   String   @id
+  expiresAt            DateTime
+  token                String   @unique @db.VarChar(255)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  ipAddress            String?  @db.VarChar(64)
+  userAgent            String?  @db.Text
+  userId               String
+  activeOrganizationId String?  @db.VarChar(191)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String    @db.VarChar(180)
+  providerId            String    @db.VarChar(80)
+  userId                String
+  accessToken           String?   @db.Text
+  refreshToken          String?   @db.Text
+  idToken               String?   @db.Text
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?   @db.Text
+  password              String?   @db.Text
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String   @db.VarChar(255)
+  value      String   @db.Text
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// Better Auth organization plugin: `member` mapped onto school_memberships.
+model Member {
+  id        String   @id @default(cuid())
+  schoolId  String
+  userId    String
+  role      String   @default("member") @db.VarChar(40)
+  status    String   @default("active") @db.VarChar(20)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, userId])
+  @@index([schoolId, status])
+  @@index([userId])
+  @@map("school_memberships")
+}
+
+// Better Auth organization plugin: `invitation`.
+model Invitation {
+  id        String   @id @default(cuid())
+  schoolId  String
+  email     String   @db.VarChar(180)
+  role      String   @db.VarChar(40)
+  status    String   @default("pending") @db.VarChar(20)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  inviterId String
+  teamId    String?  @db.VarChar(191)
+
+  school  School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  inviter User   @relation("InvitationInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, email])
+  @@index([schoolId, status])
+  @@index([email])
+  @@map("invitation")
+}
+
 // ────────────────────────────── School / settings ──────────────────────────────
 
 model Setting {

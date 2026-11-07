@@ -33,6 +33,7 @@ model School {
   logo             String?  @db.Text
   status           String   @default("active") @db.VarChar(20)
   subscriptionPlan String   @default("free") @db.VarChar(40)
+  metadata         Json?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -133,7 +134,9 @@ model School {
   appUsers             AppUser[]
   auditLogs            AuditLog[]
   userLogs             UserLog[]
-  memberships          SchoolMembership[]
+  // Better Auth organization plugin: `organization` is mapped to this model.
+  members              Member[]
+  invitations          Invitation[]
 
   @@index([status])
   @@map("schools")
@@ -149,9 +152,11 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  sessions    Session[]
-  accounts    Account[]
-  memberships SchoolMembership[]
+  sessions        Session[]
+  accounts        Account[]
+  // Better Auth organization plugin: `member` is mapped to the Member model.
+  members         Member[]
+  invitationsSent Invitation[] @relation("InvitationInviter")
 
   @@map("user")
 }
@@ -166,6 +171,9 @@ model Session {
   ipAddress String?  @db.VarChar(64)
   userAgent String?  @db.Text
   userId    String
+  // Active school for the session. Better Auth's organization plugin writes this
+  // after validating that the user is a member of the organization.
+  activeOrganizationId String? @db.VarChar(191)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -209,7 +217,9 @@ model Verification {
   @@map("verification")
 }
 
-model SchoolMembership {
+// Better Auth organization plugin: `member` mapped onto the existing
+// school_memberships table. `organizationId` -> `schoolId`.
+model Member {
   id        String   @id @default(cuid())
   schoolId  String
   userId    String
@@ -218,6 +228,8 @@ model SchoolMembership {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // The relation is named `school` because the organization plugin model is
+  // mapped to `School`; the adapter looks up the mapped relation name.
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -225,6 +237,27 @@ model SchoolMembership {
   @@index([schoolId, status])
   @@index([userId])
   @@map("school_memberships")
+}
+
+// Better Auth organization plugin: `invitation`.
+model Invitation {
+  id        String   @id @default(cuid())
+  schoolId  String
+  email     String   @db.VarChar(180)
+  role      String   @db.VarChar(40)
+  status    String   @default("pending") @db.VarChar(20)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  inviterId String
+  teamId    String?  @db.VarChar(191)
+
+  school  School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  inviter User   @relation("InvitationInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, email])
+  @@index([schoolId, status])
+  @@index([email])
+  @@map("invitation")
 }
 
 // ────────────────────────────── School / settings ──────────────────────────────
