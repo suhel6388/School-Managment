@@ -1,5 +1,5 @@
 import { query, route } from "@/lib/http";
-import { requirePermission } from "@/lib/auth";
+import { requireSchoolPermission } from "@/lib/tenant";
 import { ApiError } from "@/lib/errors";
 import { getReport } from "@/lib/reports";
 
@@ -24,8 +24,8 @@ const ALLOWED = new Set([
 type Ctx = { params: Promise<{ type: string }> };
 
 export const GET = route(async (req: Request, ctx: Ctx) => {
-  await requirePermission("reports.read");
+  const context = await requireSchoolPermission("reports.read");
   const { type } = await ctx.params;
   if (!ALLOWED.has(type)) throw new ApiError(404, "Unknown report.");
-  return getReport(type, query(req));
+  return getReport(type, query(req), context.school.id);
 });

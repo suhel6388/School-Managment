@@ -2,6 +2,7 @@ import { Prisma } from "@/lib/prisma-client";
 import { prisma } from "./prisma";
 import { ApiError } from "./errors";
 import { parseYmd, toYmd } from "./dates";
+import { resolveSchoolContext, modelHasSchoolId } from "./tenant";
 
 const STATUSES = ["Present", "Absent", "Late", "Half Day", "Holiday"];
 
@@ -11,17 +12,24 @@ export async function attendanceForDate(
 ) {
   const day = parseYmd(date);
   if (!day) throw new ApiError(422, "Date must be YYYY-MM-DD.");
+  const tenantCtx = await resolveSchoolContext();
+  const schoolId = tenantCtx?.school.id;
 
   if (opts.type === "staff") {
+    const staffWhere: Record<string, unknown> = { status: "active" };
+    if (schoolId && modelHasSchoolId("Staff")) staffWhere.schoolId = schoolId;
     const [staff, attendance] = await Promise.all([
-      prisma.staff.findMany({ where: { status: "active" }, orderBy: { name: "asc" } }),
+      prisma.staff.findMany({ where: staffWhere, orderBy: { name: "asc" } }),
       prisma.staffAttendance.findMany({ where: { date: day } }),
     ]);
+    const scopedStaff = schoolId
+      ? staff.filter((s: Record<string, unknown>) => !s.schoolId || s.schoolId === schoolId)
+      : staff;
     const map = new Map(attendance.map((a) => [a.staffId, a]));
     return {
       date,
       type: "staff",
-      rows: staff.map((s) => ({
+      rows: scopedStaff.map((s) => ({
         id: s.id,
         code: s.empId,
         name: s.name,
@@ -32,25 +40,30 @@ export async function attendanceForDate(
     };
   }
 
+  const studentWhere: Record<string, unknown> = {
+    status: "active",
+    ...(opts.classId ? { classId: opts.classId } : {}),
+    ...(opts.sectionId ? { sectionId: opts.sectionId } : {}),
+  };
+  if (schoolId && modelHasSchoolId("Student")) studentWhere.schoolId = schoolId;
   const students = await prisma.student.findMany({
-    where: {
-      status: "active",
-      ...(opts.classId ? { classId: opts.classId } : {}),
-      ...(opts.sectionId ? { sectionId: opts.sectionId } : {}),
-    },
+    where: studentWhere,
     include: { class: true, section: true },
     orderBy: { name: "asc" },
   });
-  const attendance = students.length
+  const scopedStudents = schoolId
+    ? students.filter((s: Record<string, unknown>) => !s.schoolId || s.schoolId === schoolId)
+    : students;
+  const attendance = scopedStudents.length
     ? await prisma.studentAttendance.findMany({
-        where: { date: day, studentId: { in: students.map((s) => s.id) } },
+        where: { date: day, studentId: { in: scopedStudents.map((s) => s.id) } },
       })
     : [];
   const map = new Map(attendance.map((a) => [a.studentId, a]));
   return {
     date,
     type: "student",
-    rows: students.map((s) => ({
+    rows: scopedStudents.map((s) => ({
       id: s.id,
       code: s.admNo,
       name: s.name,
@@ -93,44 +106,62 @@ export async function saveAttendance(input: {
     }
   }
 
+  const tenantCtx = await resolveSchoolContext();
+  const schoolId = tenantCtx?.school.id;
+
   return prisma.$transaction(async (tx) => {
     if (input.type === "staff") {
-      const count = await tx.staff.count({ where: { id: { in: input.records.map((r) => r.id) } } });
-      if (count !== input.records.length) throw new ApiError(422, "One or more staff members do not exist.");
+      const staffWhere: Record<string, unknown> = { id: { in: input.records.map((r) => r.id) } };
+      if (schoolId && modelHasSchoolId("Staff")) staffWhere.schoolId = schoolId;
+      const count = await tx.staff.count({ where: staffWhere });
+      if (count !== input.records.length) throw new ApiError(422, "One or more staff members do not exist or belong to another school.");
       for (const record of input.records) {
+        const createData: Record<string, unknown> = {
+          staffId: record.id,
+          date: day,
+          status: record.status,
+          note: record.note ?? null,
+        };
+        if (schoolId && modelHasSchoolId("StaffAttendance")) createData.schoolId = schoolId;
         await tx.staffAttendance.upsert({
           where: { staffId_date: { staffId: record.id, date: day } },
-          create: { staffId: record.id, date: day, status: record.status, note: record.note ?? null },
+          create: createData as any,
           update: { status: record.status, note: record.note ?? null },
         });
       }
     } else {
+      const studentWhere: Record<string, unknown> = { id: { in: input.records.map((r) => r.id) } };
+      if (schoolId && modelHasSchoolId("Student")) studentWhere.schoolId = schoolId;
       const count = await tx.student.count({
-        where: { id: { in: input.records.map((r) => r.id) } },
+        where: studentWhere,
       });
       if (count !== input.records.length) {
-        throw new ApiError(422, "One or more students do not exist.");
+        throw new ApiError(422, "One or more students do not exist or belong to another school.");
       }
       for (const record of input.records) {
+        const createData: Record<string, unknown> = {
+          studentId: record.id,
+          date: day,
+          status: record.status,
+          note: record.note ?? null,
+        };
+        if (schoolId && modelHasSchoolId("StudentAttendance")) createData.schoolId = schoolId;
         await tx.studentAttendance.upsert({
           where: { studentId_date: { studentId: record.id, date: day } },
-          create: {
-            studentId: record.id,
-            date: day,
-            status: record.status,
-            note: record.note ?? null,
-          },
+          create: createData as any,
           update: { status: record.status, note: record.note ?? null },
         });
       }
     }
+    const auditData: Record<string, unknown> = {
+      user: input.username,
+      act: "attendance",
+      entity: input.type === "staff" ? "staffAttendance" : "studentAttendance",
+      description: `${input.date} · ${input.records.length} records`,
+    };
+    if (schoolId && modelHasSchoolId("AuditLog")) auditData.schoolId = schoolId;
     await tx.auditLog.create({
-      data: {
-        user: input.username,
-        act: "attendance",
-        entity: input.type === "staff" ? "staffAttendance" : "studentAttendance",
-        description: `${input.date} · ${input.records.length} records`,
-      },
+      data: auditData as any,
     });
     return { saved: input.records.length };
   });

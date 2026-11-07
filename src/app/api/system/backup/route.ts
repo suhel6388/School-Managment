@@ -1,8 +1,8 @@
 import { route } from "@/lib/http";
-import { requirePermission } from "@/lib/auth";
+import { requireSchoolPermission } from "@/lib/tenant";
 import { buildBackup } from "@/lib/backup";
 
 export const GET = route(async () => {
-  await requirePermission("sys");
-  return buildBackup();
+  const context = await requireSchoolPermission("sys");
+  return buildBackup(context.school.id);
 });

@@ -3,6 +3,7 @@ import { pendingFees, loadAllFeeData } from "./fees";
 import { attendanceReport } from "./attendance";
 import { marksheetsForClass } from "./exams";
 import { dmy, monthEnd, monthStart, parseYmd, toYmd, todayYmd } from "./dates";
+import { resolveSchoolContext, modelHasSchoolId, withTenantFilter } from "./tenant";
 
 type Cell = string | number;
 export type ReportResult = {
@@ -21,57 +22,69 @@ function range(from?: string, to?: string): { gte: Date; lte: Date } {
 
 const money = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
-export async function getReport(type: string, params: URLSearchParams): Promise<ReportResult> {
+export async function getReport(
+  type: string,
+  params: URLSearchParams,
+  tenantSchoolId?: string,
+): Promise<ReportResult> {
+  const schoolId = tenantSchoolId ?? (await resolveSchoolContext())?.school.id;
   switch (type) {
     case "student":
-      return studentReport(params);
+      return studentReport(params, schoolId);
     case "finance":
-      return financeReport(params);
+      return financeReport(params, schoolId);
     case "attendance":
-      return attendanceReportView(params);
+      return attendanceReportView(params, schoolId);
     case "exam":
-      return examReport(params);
+      return examReport(params, schoolId);
     case "online":
-      return onlineReport();
+      return onlineReport(schoolId);
     case "lesson":
-      return lessonReport();
+      return lessonReport(schoolId);
     case "hr":
-      return hrReport(params);
+      return hrReport(params, schoolId);
     case "homework":
-      return homeworkReport();
+      return homeworkReport(schoolId);
     case "library":
-      return libraryReport();
+      return libraryReport(schoolId);
     case "inventory":
-      return inventoryReport();
+      return inventoryReport(schoolId);
     case "transport":
-      return transportReport();
+      return transportReport(schoolId);
     case "hostel":
-      return hostelReport();
+      return hostelReport(schoolId);
     case "alumni":
-      return alumniReport();
+      return alumniReport(schoolId);
     case "userlog":
-      return userLogReport();
+      return userLogReport(schoolId);
     case "audit":
-      return auditReport();
+      return auditReport(schoolId);
     default:
       throw new Error("Unknown report");
   }
 }
 
-async function studentReport(params: URLSearchParams): Promise<ReportResult> {
+async function studentReport(params: URLSearchParams, schoolId?: string): Promise<ReportResult> {
   const classId = params.get("classId") ?? "";
   const sectionId = params.get("sectionId") ?? "";
   const q = (params.get("q") ?? "").toLowerCase();
+  const where: Record<string, unknown> = {
+    status: "active",
+    ...(classId ? { classId } : {}),
+    ...(sectionId ? { sectionId } : {}),
+  };
+  if (schoolId && modelHasSchoolId("Student")) {
+    where.schoolId = schoolId;
+  }
   const students = await prisma.student.findMany({
-    where: {
-      status: "active",
-      ...(classId ? { classId } : {}),
-      ...(sectionId ? { sectionId } : {}),
-    },
+    where,
     include: { class: true, section: true, category: true, house: true },
     orderBy: { name: "asc" },
   });
-  const filtered = students.filter(
+  const scopedStudents = schoolId
+    ? students.filter((s: Record<string, unknown>) => !s.schoolId || s.schoolId === schoolId)
+    : students;
+  const filtered = scopedStudents.filter(
     (s) => !q || `${s.name} ${s.admNo} ${s.father ?? ""}`.toLowerCase().includes(q),
   );
   return {
@@ -95,29 +108,39 @@ async function studentReport(params: URLSearchParams): Promise<ReportResult> {
   };
 }
 
-async function financeReport(params: URLSearchParams): Promise<ReportResult> {
+async function financeReport(params: URLSearchParams, schoolId?: string): Promise<ReportResult> {
   const { gte, lte } = range(params.get("from") ?? undefined, params.get("to") ?? undefined);
+  const paymentWhere: Record<string, unknown> = { date: { gte, lte } };
+  const expenseWhere: Record<string, unknown> = { date: { gte, lte } };
+  if (schoolId && modelHasSchoolId("Payment")) paymentWhere.schoolId = schoolId;
+  if (schoolId && modelHasSchoolId("Expense")) expenseWhere.schoolId = schoolId;
   const [payments, expenses] = await Promise.all([
-    prisma.payment.findMany({ where: { date: { gte, lte } } }),
-    prisma.expense.findMany({ where: { date: { gte, lte } } }),
+    prisma.payment.findMany({ where: paymentWhere }),
+    prisma.expense.findMany({ where: expenseWhere }),
   ]);
+  const scopedPayments = schoolId
+    ? payments.filter((p: Record<string, unknown>) => !p.schoolId || p.schoolId === schoolId)
+    : payments;
+  const scopedExpenses = schoolId
+    ? expenses.filter((e: Record<string, unknown>) => !e.schoolId || e.schoolId === schoolId)
+    : expenses;
   const months = Array.from(
     new Set([
-      ...payments.map((p) => toYmd(p.date).slice(0, 7)),
-      ...expenses.map((e) => toYmd(e.date).slice(0, 7)),
+      ...scopedPayments.map((p) => toYmd(p.date).slice(0, 7)),
+      ...scopedExpenses.map((e) => toYmd(e.date).slice(0, 7)),
     ]),
   ).sort();
   const rows = months.map((m) => {
-    const income = payments
+    const income = scopedPayments
       .filter((p) => toYmd(p.date).startsWith(m))
       .reduce((s, p) => s + Number(p.amount) + Number(p.fine), 0);
-    const spent = expenses
+    const spent = scopedExpenses
       .filter((e) => toYmd(e.date).startsWith(m))
       .reduce((s, e) => s + Number(e.amount), 0);
     return [m, money(income), money(spent), money(income - spent)];
   });
-  const collected = payments.reduce((s, p) => s + Number(p.amount) + Number(p.fine), 0);
-  const spent = expenses.reduce((s, e) => s + Number(e.amount), 0);
+  const collected = scopedPayments.reduce((s, p) => s + Number(p.amount) + Number(p.fine), 0);
+  const spent = scopedExpenses.reduce((s, e) => s + Number(e.amount), 0);
   const pending = await pendingFees();
   return {
     title: "Finance report",
@@ -132,7 +155,7 @@ async function financeReport(params: URLSearchParams): Promise<ReportResult> {
   };
 }
 
-async function attendanceReportView(params: URLSearchParams): Promise<ReportResult> {
+async function attendanceReportView(params: URLSearchParams, _schoolId?: string): Promise<ReportResult> {
   const month = params.get("month") || todayYmd().slice(0, 7);
   const classId = params.get("classId") ?? "";
   const sectionId = params.get("sectionId") ?? "";
@@ -156,7 +179,7 @@ async function attendanceReportView(params: URLSearchParams): Promise<ReportResu
   };
 }
 
-async function examReport(params: URLSearchParams): Promise<ReportResult> {
+async function examReport(params: URLSearchParams, _schoolId?: string): Promise<ReportResult> {
   const groupId = params.get("groupId") ?? "";
   const classId = params.get("classId") ?? "";
   if (!groupId || !classId) {
@@ -193,7 +216,7 @@ async function examReport(params: URLSearchParams): Promise<ReportResult> {
   };
 }
 
-async function onlineReport(): Promise<ReportResult> {
+async function onlineReport(_schoolId?: string): Promise<ReportResult> {
   const results = await prisma.onlineExamResult.findMany({
     include: { exam: true, student: true },
     orderBy: { date: "desc" },
@@ -212,7 +235,7 @@ async function onlineReport(): Promise<ReportResult> {
   };
 }
 
-async function lessonReport(): Promise<ReportResult> {
+async function lessonReport(_schoolId?: string): Promise<ReportResult> {
   const lessons = await prisma.lesson.findMany({
     include: { class: true, subject: true, topics: true },
     orderBy: { name: "asc" },
@@ -235,28 +258,37 @@ async function lessonReport(): Promise<ReportResult> {
   };
 }
 
-async function hrReport(params: URLSearchParams): Promise<ReportResult> {
+async function hrReport(params: URLSearchParams, schoolId?: string): Promise<ReportResult> {
   const month = params.get("month") || todayYmd().slice(0, 7);
+  const staffWhere: Record<string, unknown> = { status: "active" };
+  const attWhere: Record<string, unknown> = { date: { gte: monthStart(month), lte: monthEnd(month) } };
+  const payWhere: Record<string, unknown> = { month };
+  if (schoolId && modelHasSchoolId("Staff")) staffWhere.schoolId = schoolId;
+  if (schoolId && modelHasSchoolId("StaffAttendance")) attWhere.schoolId = schoolId;
+  if (schoolId && modelHasSchoolId("Payroll")) payWhere.schoolId = schoolId;
   const [staff, attendance, payroll] = await Promise.all([
     prisma.staff.findMany({
-      where: { status: "active" },
+      where: staffWhere,
       include: { designation: true },
       orderBy: { name: "asc" },
     }),
     prisma.staffAttendance.findMany({
-      where: { date: { gte: monthStart(month), lte: monthEnd(month) } },
+      where: attWhere,
     }),
-    prisma.payroll.findMany({ where: { month } }),
+    prisma.payroll.findMany({ where: payWhere }),
   ]);
+  const scopedStaff = schoolId
+    ? staff.filter((s: Record<string, unknown>) => !s.schoolId || s.schoolId === schoolId)
+    : staff;
   const paid = payroll.filter((p) => p.status === "Paid").reduce((s, p) => s + Number(p.net), 0);
   return {
     title: "Human resource report",
     sum: [
-      ["Active staff", staff.length],
+      ["Active staff", scopedStaff.length],
       ["Payroll paid", money(paid)],
     ],
     cols: ["Emp ID", "Name", "Designation", "Present", "Absent", "Net pay", "Pay status"],
-    rows: staff.map((s) => {
+    rows: scopedStaff.map((s) => {
       const own = attendance.filter((a) => a.staffId === s.id);
       const p = payroll.find((x) => x.staffId === s.id);
       return [
@@ -272,7 +304,7 @@ async function hrReport(params: URLSearchParams): Promise<ReportResult> {
   };
 }
 
-async function homeworkReport(): Promise<ReportResult> {
+async function homeworkReport(_schoolId?: string): Promise<ReportResult> {
   const homework = await prisma.homework.findMany({
     include: {
       class: true,
@@ -307,7 +339,7 @@ async function homeworkReport(): Promise<ReportResult> {
   };
 }
 
-async function libraryReport(): Promise<ReportResult> {
+async function libraryReport(_schoolId?: string): Promise<ReportResult> {
   const [books, issues, members, students, staff] = await Promise.all([
     prisma.book.findMany(),
     prisma.bookIssue.findMany({ include: { book: true }, orderBy: { issue: "desc" } }),
@@ -343,7 +375,7 @@ async function libraryReport(): Promise<ReportResult> {
   };
 }
 
-async function inventoryReport(): Promise<ReportResult> {
+async function inventoryReport(_schoolId?: string): Promise<ReportResult> {
   const [items, stock, issues] = await Promise.all([
     prisma.item.findMany({ include: { category: true }, orderBy: { name: "asc" } }),
     prisma.itemStock.findMany(),
@@ -366,7 +398,7 @@ async function inventoryReport(): Promise<ReportResult> {
   };
 }
 
-async function transportReport(): Promise<ReportResult> {
+async function transportReport(_schoolId?: string): Promise<ReportResult> {
   const [assignments, fees, routes] = await Promise.all([
     prisma.transportAssignment.findMany({
       include: { student: { include: { class: true } }, route: true, pickup: true },
@@ -394,7 +426,7 @@ async function transportReport(): Promise<ReportResult> {
   };
 }
 
-async function hostelReport(): Promise<ReportResult> {
+async function hostelReport(_schoolId?: string): Promise<ReportResult> {
   const rooms = await prisma.room.findMany({
     include: { hostel: true, allocations: true },
     orderBy: { roomNo: "asc" },
@@ -413,7 +445,7 @@ async function hostelReport(): Promise<ReportResult> {
   };
 }
 
-async function alumniReport(): Promise<ReportResult> {
+async function alumniReport(_schoolId?: string): Promise<ReportResult> {
   const alumni = await prisma.alumni.findMany({ orderBy: { name: "asc" } });
   return {
     title: "Alumni report",
@@ -429,7 +461,7 @@ async function alumniReport(): Promise<ReportResult> {
   };
 }
 
-async function userLogReport(): Promise<ReportResult> {
+async function userLogReport(_schoolId?: string): Promise<ReportResult> {
   const logs = await prisma.userLog.findMany({ orderBy: { time: "desc" }, take: 500 });
   return {
     title: "User log",
@@ -439,7 +471,7 @@ async function userLogReport(): Promise<ReportResult> {
   };
 }
 
-async function auditReport(): Promise<ReportResult> {
+async function auditReport(_schoolId?: string): Promise<ReportResult> {
   const logs = await prisma.auditLog.findMany({ orderBy: { time: "desc" }, take: 500 });
   return {
     title: "Audit trail report",
@@ -455,12 +487,21 @@ async function auditReport(): Promise<ReportResult> {
   };
 }
 
-export async function reportBootstrap() {
+export async function reportBootstrap(tenantSchoolId?: string) {
+  const schoolId = tenantSchoolId ?? (await resolveSchoolContext())?.school.id;
+  const classWhere: Record<string, unknown> = {};
+  const secWhere: Record<string, unknown> = {};
+  const examWhere: Record<string, unknown> = {};
+  const feeWhere: Record<string, unknown> = {};
+  if (schoolId && modelHasSchoolId("SchoolClass")) classWhere.schoolId = schoolId;
+  if (schoolId && modelHasSchoolId("Section")) secWhere.schoolId = schoolId;
+  if (schoolId && modelHasSchoolId("ExamGroup")) examWhere.schoolId = schoolId;
+  if (schoolId && modelHasSchoolId("FeeType")) feeWhere.schoolId = schoolId;
   const [classes, sections, examGroups, feeTypes] = await Promise.all([
-    prisma.schoolClass.findMany({ orderBy: { order: "asc" } }),
-    prisma.section.findMany({ orderBy: { name: "asc" } }),
-    prisma.examGroup.findMany({ orderBy: { name: "asc" } }),
-    prisma.feeType.findMany({ orderBy: { name: "asc" } }),
+    prisma.schoolClass.findMany({ where: classWhere, orderBy: { order: "asc" } }),
+    prisma.section.findMany({ where: secWhere, orderBy: { name: "asc" } }),
+    prisma.examGroup.findMany({ where: examWhere, orderBy: { name: "asc" } }),
+    prisma.feeType.findMany({ where: feeWhere, orderBy: { name: "asc" } }),
   ]);
   return { classes, sections, examGroups, feeTypes };
 }

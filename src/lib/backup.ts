@@ -2,6 +2,7 @@ import { Prisma } from "@/lib/prisma-client";
 import { prisma } from "./prisma";
 import { serializeModel, modelMeta } from "./dmmf";
 import { ApiError } from "./errors";
+import { resolveSchoolContext, modelHasSchoolId } from "./tenant";
 
 /** Data tables included in backup/restore. User accounts, roles and logs stay local. */
 export const BACKUP_MODELS = [
@@ -117,13 +118,22 @@ function delegate(db: typeof prisma | Prisma.TransactionClient, model: string) {
   };
 }
 
-export async function buildBackup(): Promise<BackupPayload> {
+export async function buildBackup(tenantSchoolId?: string): Promise<BackupPayload> {
+  const schoolId = tenantSchoolId ?? (await resolveSchoolContext())?.school.id;
   const data: Record<string, Record<string, unknown>[]> = {};
   const counts: Record<string, number> = {};
   for (const model of BACKUP_MODELS) {
-    const rows = await delegate(prisma, model).findMany();
-    data[model] = rows.map((row) => serializeModel(model, row) as Record<string, unknown>);
-    counts[model] = rows.length;
+    const hasCol = modelHasSchoolId(model);
+    const where = hasCol && schoolId ? { schoolId } : undefined;
+    const rows = await delegate(prisma, model).findMany(where ? { where } : undefined);
+    const scopedRows = schoolId
+      ? rows.filter((r) => {
+          const item = r as Record<string, unknown>;
+          return !item.schoolId || item.schoolId === schoolId;
+        })
+      : rows;
+    data[model] = scopedRows.map((row) => serializeModel(model, row) as Record<string, unknown>);
+    counts[model] = scopedRows.length;
   }
   return {
     app: "ICE School Manager",
@@ -176,7 +186,11 @@ function reviveRow(model: string, row: Record<string, unknown>): Record<string, 
   return out;
 }
 
-export async function restoreBackup(payload: unknown): Promise<{ restored: Record<string, number> }> {
+export async function restoreBackup(
+  payload: unknown,
+  tenantSchoolId?: string,
+): Promise<{ restored: Record<string, number> }> {
+  const schoolId = tenantSchoolId ?? (await resolveSchoolContext())?.school.id;
   if (!payload || typeof payload !== "object") throw new ApiError(422, "Backup file is not valid JSON.");
   const backup = payload as Partial<BackupPayload>;
   if (backup.app !== "ICE School Manager" || backup.version !== 1 || !backup.data) {
@@ -198,7 +212,9 @@ export async function restoreBackup(payload: unknown): Promise<{ restored: Recor
       try {
         for (const model of BACKUP_MODELS) {
           if (data[model] === undefined) continue;
-          await delegate(tx, model).deleteMany({});
+          const hasCol = modelHasSchoolId(model);
+          const deleteWhere = hasCol && schoolId ? { schoolId } : {};
+          await delegate(tx, model).deleteMany({ where: deleteWhere });
         }
         for (const model of BACKUP_MODELS) {
           const rows = data[model];
@@ -206,7 +222,13 @@ export async function restoreBackup(payload: unknown): Promise<{ restored: Recor
             restored[model] = 0;
             continue;
           }
-          const revived = rows.map((row) => reviveRow(model, row));
+          const revived = rows.map((row) => {
+            const revivedRow = reviveRow(model, row);
+            if (schoolId && modelHasSchoolId(model)) {
+              revivedRow.schoolId = schoolId;
+            }
+            return revivedRow;
+          });
           for (let i = 0; i < revived.length; i += 1000) {
             await delegate(tx, model).createMany({
               data: revived.slice(i, i + 1000),

@@ -141,3 +141,18 @@ export function hasPermission(
 ): boolean {
   return checkPermission(userOrRole, permission);
 }
+
+export {
+  withTenant,
+  withSchoolContext,
+  getTenantContext,
+  requireTenantContext,
+  runWithTenantContext,
+  tenantDb,
+  assertSameSchool,
+  validateSameSchool,
+  type TenantRequestContext,
+  type AuthenticatedSchoolRequest,
+  type TenantRouteHandler,
+} from "./tenant";
+

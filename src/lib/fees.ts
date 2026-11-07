@@ -2,6 +2,7 @@ import { Prisma } from "@/lib/prisma-client";
 import { prisma } from "./prisma";
 import { ApiError } from "./errors";
 import { parseYmd, todayYmd, toYmd } from "./dates";
+import { resolveSchoolContext, assertSameSchool, modelHasSchoolId } from "./tenant";
 
 const D = Prisma.Decimal;
 export const ZERO = new D(0);
@@ -338,8 +339,12 @@ export async function dueFeeRows(opts: {
 
 /** Recompute one fee row inside a transaction (used when collecting a payment). */
 async function loadRowForUpdate(tx: Prisma.TransactionClient, studentId: string, feeKey: string) {
+  const tenantCtx = await resolveSchoolContext();
   const student = await tx.student.findUnique({ where: { id: studentId } });
   if (!student) throw new ApiError(404, "Student not found.");
+  if (tenantCtx && (student as Record<string, unknown>).schoolId) {
+    assertSameSchool(tenantCtx, String((student as Record<string, unknown>).schoolId));
+  }
   const payments = await tx.payment.findMany({ where: { studentId } });
 
   let amount = ZERO;
@@ -440,31 +445,38 @@ export async function collectFees(input: {
       );
     }
 
+    const tenantCtx = await resolveSchoolContext();
+    const schoolId = tenantCtx?.school.id;
+
     const counter = await tx.counter.upsert({
       where: { key: "receipt" },
       create: { key: "receipt", value: 1001 },
       update: { value: { increment: 1 } },
     });
+    const paymentData: Record<string, unknown> = {
+      rc: `RCPT-${counter.value}`,
+      studentId: input.studentId,
+      feeKey: input.feeKey,
+      amount: r2(amount),
+      discount: r2(discount),
+      fine: r2(fine),
+      mode,
+      date,
+      note: input.note?.trim() || null,
+    };
+    if (schoolId && modelHasSchoolId("Payment")) paymentData.schoolId = schoolId;
     const payment = await tx.payment.create({
-      data: {
-        rc: `RCPT-${counter.value}`,
-        studentId: input.studentId,
-        feeKey: input.feeKey,
-        amount: r2(amount),
-        discount: r2(discount),
-        fine: r2(fine),
-        mode,
-        date,
-        note: input.note?.trim() || null,
-      },
+      data: paymentData as any,
     });
+    const auditData: Record<string, unknown> = {
+      user: input.username,
+      act: "collect",
+      entity: "fees",
+      description: `${row.student.name} ₹${money(amount).toFixed(2)} (${row.name})`,
+    };
+    if (schoolId && modelHasSchoolId("AuditLog")) auditData.schoolId = schoolId;
     await tx.auditLog.create({
-      data: {
-        user: input.username,
-        act: "collect",
-        entity: "fees",
-        description: `${row.student.name} ₹${money(amount).toFixed(2)} (${row.name})`,
-      },
+      data: auditData as any,
     });
     return {
       payment: {

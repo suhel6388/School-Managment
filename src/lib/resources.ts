@@ -6,6 +6,12 @@ import { can, requirePermission, requireUser, type SessionUser } from "./auth";
 import { modelMeta } from "./dmmf";
 import { serializeModel } from "./dmmf";
 import { parseYmd, todayYmd } from "./dates";
+import {
+  resolveSchoolContext,
+  assertSameSchool,
+  validateSameSchool,
+  modelHasSchoolId,
+} from "./tenant";
 
 type Tx = Prisma.TransactionClient;
 type Input = Record<string, unknown>;
@@ -1170,10 +1176,15 @@ async function requireResourcePermission(
 export async function listResource(name: string, params: URLSearchParams) {
   const config = getResourceConfig(name);
   await requireResourcePermission(config, name, "read");
+  const tenantCtx = await resolveSchoolContext();
 
   const page = Math.max(1, Number(params.get("page") ?? 1) || 1);
   const pageSize = Math.min(500, Math.max(1, Number(params.get("pageSize") ?? 12) || 12));
   const where = buildWhere(config, params);
+
+  if (tenantCtx && modelHasSchoolId(config.model)) {
+    (where as Record<string, unknown>).schoolId = tenantCtx.school.id;
+  }
 
   let orderBy: Record<string, "asc" | "desc"> = config.orderBy ?? { id: "desc" };
   const sort = params.get("sort");
@@ -1193,8 +1204,15 @@ export async function listResource(name: string, params: URLSearchParams) {
     }) as Promise<unknown[]>,
   ]);
 
+  const tenantRows = tenantCtx
+    ? rows.filter((r) => {
+        const item = r as Record<string, unknown>;
+        return !item.schoolId || item.schoolId === tenantCtx.school.id;
+      })
+    : rows;
+
   return {
-    items: rows.map((row: unknown) => {
+    items: tenantRows.map((row: unknown) => {
       const item = serialized(config, row);
       // Never ship stored file bodies with list responses.
       if (config.model === "Content" && "file" in item) {
@@ -1213,11 +1231,16 @@ export async function listResource(name: string, params: URLSearchParams) {
 export async function getResource(name: string, id: string) {
   const config = getResourceConfig(name);
   await requireResourcePermission(config, name, "read");
+  const tenantCtx = await resolveSchoolContext();
   const row = await delegate(prisma, config.model).findUnique({
     where: { id },
     include: config.include,
   });
   if (!row) throw new ApiError(404, "Record not found.");
+  if (tenantCtx && "schoolId" in (row as Record<string, unknown>)) {
+    const sId = (row as Record<string, unknown>).schoolId;
+    if (sId) assertSameSchool(tenantCtx, String(sId));
+  }
   return serialized(config, row);
 }
 
@@ -1225,10 +1248,28 @@ export async function createResource(name: string, input: Input) {
   const config = getResourceConfig(name);
   const user = await requireResourcePermission(config, name, "create");
   if (config.readOnly || config.noCreate) throw new ApiError(405, "This list is read-only.");
+  const tenantCtx = await resolveSchoolContext();
+
+  if (tenantCtx) {
+    const checks: Array<{ model: string; id: string | null | undefined }> = [];
+    const meta = modelMeta(config.model);
+    for (const [relationField, targetModel] of Object.entries(meta.relations)) {
+      const fk = relationField + "Id";
+      if (input[fk] && typeof input[fk] === "string") {
+        checks.push({ model: targetModel, id: input[fk] as string });
+      }
+    }
+    if (checks.length > 0) {
+      await validateSameSchool(tenantCtx.school.id, checks);
+    }
+  }
 
   const row = await prisma.$transaction(async (tx) => {
     const ctx: ResourceContext = { user, tx, input, mode: "create" };
     let data = coerceInput(config.model, input, true);
+    if (tenantCtx && modelHasSchoolId(config.model)) {
+      data.schoolId = tenantCtx.school.id;
+    }
     if (config.validate) await config.validate(data, ctx);
     if (config.prepareCreate) data = await config.prepareCreate(data, ctx);
     const created = await delegate(tx, config.model).create({
@@ -1246,12 +1287,33 @@ export async function updateResource(name: string, id: string, input: Input) {
   const config = getResourceConfig(name);
   const user = await requireResourcePermission(config, name, "update");
   if (config.readOnly) throw new ApiError(405, "This list is read-only.");
+  const tenantCtx = await resolveSchoolContext();
 
   const row = await prisma.$transaction(async (tx) => {
     const existing = await delegate(tx, config.model).findUnique({ where: { id } });
     if (!existing) throw new ApiError(404, "Record not found.");
+    if (tenantCtx && "schoolId" in (existing as Record<string, unknown>)) {
+      const sId = (existing as Record<string, unknown>).schoolId;
+      if (sId) assertSameSchool(tenantCtx, String(sId));
+    }
+
+    if (tenantCtx) {
+      const checks: Array<{ model: string; id: string | null | undefined }> = [];
+      const meta = modelMeta(config.model);
+      for (const [relationField, targetModel] of Object.entries(meta.relations)) {
+        const fk = relationField + "Id";
+        if (input[fk] && typeof input[fk] === "string") {
+          checks.push({ model: targetModel, id: input[fk] as string });
+        }
+      }
+      if (checks.length > 0) {
+        await validateSameSchool(tenantCtx.school.id, checks, tx);
+      }
+    }
+
     const ctx: ResourceContext = { user, tx, input, mode: "update", id };
     let data = coerceInput(config.model, input, false);
+    delete data.schoolId; // Never overwrite or transfer schoolId
     if (config.validate) await config.validate(data, ctx);
     if (config.prepareUpdate) data = await config.prepareUpdate(data, ctx);
     if (Object.keys(data).length === 0) throw new ApiError(400, "No changes were submitted.");
@@ -1271,11 +1333,16 @@ export async function deleteResource(name: string, id: string) {
   const config = getResourceConfig(name);
   const user = await requireResourcePermission(config, name, "delete");
   if (config.readOnly || config.noDelete) throw new ApiError(405, "This list is read-only.");
+  const tenantCtx = await resolveSchoolContext();
 
   await prisma.$transaction(async (tx) => {
     const ctx: ResourceContext = { user, tx, input: {}, mode: "update", id };
     const existing = await delegate(tx, config.model).findUnique({ where: { id } });
     if (!existing) throw new ApiError(404, "Record not found.");
+    if (tenantCtx && "schoolId" in (existing as Record<string, unknown>)) {
+      const sId = (existing as Record<string, unknown>).schoolId;
+      if (sId) assertSameSchool(tenantCtx, String(sId));
+    }
     if (config.beforeDelete) await config.beforeDelete(id, ctx);
     await delegate(tx, config.model).delete({ where: { id } });
     await log(tx, user, "delete", config.label ?? name, recordId(existing));
