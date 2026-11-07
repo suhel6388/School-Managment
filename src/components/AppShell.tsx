@@ -111,6 +111,20 @@ export function AppShell({
   const [assistant, setAssistant] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [passwordBusy, setPasswordBusy] = useState(false);
+  const [memberships, setMemberships] = useState<
+    Array<{
+      id: string;
+      name: string;
+      slug: string;
+      role: string;
+      status: string;
+      schoolStatus: string;
+      subscriptionPlan: string;
+    }>
+  >([]);
+  const [activeSchoolId, setActiveSchoolId] = useState<string | null>(null);
+  const [schoolModalOpen, setSchoolModalOpen] = useState(false);
+  const [switchingSchool, setSwitchingSchool] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
 
   const allowed = useMemo(
@@ -159,6 +173,53 @@ export function AppShell({
     }, 250);
     return () => window.clearTimeout(timer);
   }, [q]);
+
+  useEffect(() => {
+    apiGet<{
+      user: unknown;
+      context: { school: { id: string; name: string } } | null;
+      memberships: Array<{
+        id: string;
+        name: string;
+        slug: string;
+        role: string;
+        status: string;
+        schoolStatus: string;
+        subscriptionPlan: string;
+      }>;
+      error?: { message: string; details?: { code?: string } };
+    }>("/api/tenant/context")
+      .then((res) => {
+        if (res.memberships) {
+          setMemberships(res.memberships);
+        }
+        if (res.context?.school?.id) {
+          setActiveSchoolId(res.context.school.id);
+        }
+        if (res.error?.details?.code === "SCHOOL_SELECTION_REQUIRED") {
+          setSchoolModalOpen(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  async function selectSchool(schoolId: string) {
+    setSwitchingSchool(true);
+    try {
+      const res = await fetch("/api/auth/organization/set-active", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId: schoolId }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to switch school.");
+      }
+      window.location.reload();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Could not switch school.");
+      setSwitchingSchool(false);
+    }
+  }
 
   useEffect(() => {
     function onDown(event: MouseEvent) {
@@ -217,9 +278,29 @@ export function AppShell({
       <div id="side" className={sideOpen ? "open" : ""}>
         <div className="brand">
           <div className="logo">ICE</div>
-          <div style={{ minWidth: 0 }}>
-            <b style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{school.name}</b>
-            <small>Session {school.session}</small>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <b style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>{school.name}</b>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <small>Session {school.session}</small>
+              {memberships.length > 1 ? (
+                <button
+                  type="button"
+                  onClick={() => setSchoolModalOpen(true)}
+                  style={{
+                    background: "var(--hover, rgba(0,0,0,0.06))",
+                    border: "1px solid var(--line)",
+                    borderRadius: 4,
+                    fontSize: 10,
+                    padding: "1px 5px",
+                    cursor: "pointer",
+                    color: "inherit",
+                  }}
+                  title="Switch between schools"
+                >
+                  Switch
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
         <div className="sq">
@@ -377,6 +458,17 @@ export function AppShell({
                   {user.name}
                   <div className="hint" style={{ fontWeight: 500 }}>{user.role} · {user.username}</div>
                 </h4>
+                {memberships.length > 1 ? (
+                  <div
+                    className="it"
+                    onClick={() => {
+                      setSchoolModalOpen(true);
+                      setPop(null);
+                    }}
+                  >
+                    Switch school ({memberships.length})
+                  </div>
+                ) : null}
                 <div className="it" onClick={() => { router.push("/set_general"); setPop(null); }}>
                   School settings
                 </div>
@@ -433,6 +525,58 @@ export function AppShell({
             submitLabel="Update password"
           />
         ) : null}
+      </Modal>
+
+      <Modal
+        open={schoolModalOpen}
+        title="Select School"
+        onClose={() => {
+          if (activeSchoolId) setSchoolModalOpen(false);
+        }}
+      >
+        <div style={{ display: "grid", gap: 12 }}>
+          <p className="hint">
+            {activeSchoolId
+              ? "Select which school organization you want to switch to:"
+              : "You have access to multiple schools. Please select a school to continue:"}
+          </p>
+          <div style={{ display: "grid", gap: 8, maxHeight: 300, overflowY: "auto" }}>
+            {memberships.map((m) => {
+              const isCurrent = m.id === activeSchoolId;
+              return (
+                <div
+                  key={m.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "10px 14px",
+                    border: `1px solid ${isCurrent ? "var(--pri, #2563eb)" : "var(--line)"}`,
+                    borderRadius: 8,
+                    background: isCurrent ? "var(--hover, rgba(37,99,235,0.05))" : "var(--inp)",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{m.name}</div>
+                    <div className="hint" style={{ fontSize: 12 }}>
+                      Role: <b style={{ textTransform: "capitalize" }}>{m.role}</b>
+                      {isCurrent ? " · (Active)" : ""}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className={isCurrent ? "btn" : "btn pri"}
+                    disabled={switchingSchool || isCurrent}
+                    onClick={() => selectSchool(m.id)}
+                    style={{ height: 32, fontSize: 12, padding: "0 12px" }}
+                  >
+                    {isCurrent ? "Active" : switchingSchool ? "Switching…" : "Select"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </Modal>
     </div>
   );
