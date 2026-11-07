@@ -4,7 +4,7 @@ import { ApiError } from "@/lib/errors";
 import { collectFees } from "@/lib/fees";
 
 export const POST = route(async (req) => {
-  const user = await requirePermission("fees");
+  const user = await requirePermission("fees.create");
   const body = await readJson(req);
   const studentId = String(body.studentId ?? "");
   const feeKey = String(body.feeKey ?? "");

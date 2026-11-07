@@ -2,7 +2,7 @@ import { Prisma } from "@/lib/prisma-client";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
 import { ApiError } from "./errors";
-import { requirePermission, type SessionUser } from "./auth";
+import { can, requirePermission, requireUser, type SessionUser } from "./auth";
 import { modelMeta } from "./dmmf";
 import { serializeModel } from "./dmmf";
 import { parseYmd, todayYmd } from "./dates";
@@ -1150,9 +1150,26 @@ function buildWhere(config: Config, params: URLSearchParams): Record<string, unk
   return where;
 }
 
+async function requireResourcePermission(
+  config: Config,
+  name: string,
+  action: "read" | "create" | "update" | "delete",
+): Promise<SessionUser> {
+  const user = await requireUser();
+  const label = config.label ?? name;
+  const permKey = `${label}.${action}`;
+  if (await can(user, permKey)) return user;
+  if (action === "read" && (await can(user, config.group))) return user;
+  throw new ApiError(403, `Your role does not allow you to ${action} ${label}.`, {
+    code: "PERMISSION_DENIED",
+    required: permKey,
+    role: user.role,
+  });
+}
+
 export async function listResource(name: string, params: URLSearchParams) {
   const config = getResourceConfig(name);
-  await requirePermission(config.group);
+  await requireResourcePermission(config, name, "read");
 
   const page = Math.max(1, Number(params.get("page") ?? 1) || 1);
   const pageSize = Math.min(500, Math.max(1, Number(params.get("pageSize") ?? 12) || 12));
@@ -1195,7 +1212,7 @@ export async function listResource(name: string, params: URLSearchParams) {
 
 export async function getResource(name: string, id: string) {
   const config = getResourceConfig(name);
-  await requirePermission(config.group);
+  await requireResourcePermission(config, name, "read");
   const row = await delegate(prisma, config.model).findUnique({
     where: { id },
     include: config.include,
@@ -1206,7 +1223,7 @@ export async function getResource(name: string, id: string) {
 
 export async function createResource(name: string, input: Input) {
   const config = getResourceConfig(name);
-  const user = await requirePermission(config.group);
+  const user = await requireResourcePermission(config, name, "create");
   if (config.readOnly || config.noCreate) throw new ApiError(405, "This list is read-only.");
 
   const row = await prisma.$transaction(async (tx) => {
@@ -1227,7 +1244,7 @@ export async function createResource(name: string, input: Input) {
 
 export async function updateResource(name: string, id: string, input: Input) {
   const config = getResourceConfig(name);
-  const user = await requirePermission(config.group);
+  const user = await requireResourcePermission(config, name, "update");
   if (config.readOnly) throw new ApiError(405, "This list is read-only.");
 
   const row = await prisma.$transaction(async (tx) => {
@@ -1252,7 +1269,7 @@ export async function updateResource(name: string, id: string, input: Input) {
 
 export async function deleteResource(name: string, id: string) {
   const config = getResourceConfig(name);
-  const user = await requirePermission(config.group);
+  const user = await requireResourcePermission(config, name, "delete");
   if (config.readOnly || config.noDelete) throw new ApiError(405, "This list is read-only.");
 
   await prisma.$transaction(async (tx) => {

@@ -3,7 +3,7 @@ import { requirePermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export const GET = route(async () => {
-  await requirePermission("sys");
+  await requirePermission("system.read");
   const [students, staff, classes, sections, payments, roles, users, logs] = await Promise.all([
     prisma.student.count(),
     prisma.staff.count(),

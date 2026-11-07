@@ -4,7 +4,7 @@ import { ApiError } from "@/lib/errors";
 import { collectAllDues } from "@/lib/fees";
 
 export const POST = route(async (req) => {
-  const user = await requirePermission("fees");
+  const user = await requirePermission("fees.create");
   const body = await readJson(req);
   const studentId = String(body.studentId ?? "");
   if (!studentId) throw new ApiError(422, "Choose a student.");

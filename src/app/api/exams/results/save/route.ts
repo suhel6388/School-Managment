@@ -4,7 +4,7 @@ import { ApiError } from "@/lib/errors";
 import { saveExamResults } from "@/lib/exams";
 
 export const POST = route(async (req) => {
-  await requirePermission("exam");
+  await requirePermission("exam.update");
   const body = await readJson(req);
   const scheduleId = String(body.scheduleId ?? "");
   if (!scheduleId) throw new ApiError(422, "Choose an exam subject.");

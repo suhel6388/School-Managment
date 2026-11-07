@@ -4,7 +4,7 @@ import { ApiError } from "@/lib/errors";
 import { attendanceForDate, saveAttendance } from "@/lib/attendance";
 
 export const GET = route(async (req) => {
-  await requirePermission("att");
+  await requirePermission("attendance.read");
   const params = query(req);
   const date = params.get("date") ?? "";
   const type = params.get("type") === "staff" ? "staff" : "student";
@@ -17,7 +17,7 @@ export const GET = route(async (req) => {
 });
 
 export const POST = route(async (req) => {
-  const user = await requirePermission("att");
+  const user = await requirePermission("attendance.create");
   const body = await readJson(req);
   const type = body.type === "staff" ? "staff" : "student";
   const records = Array.isArray(body.records)

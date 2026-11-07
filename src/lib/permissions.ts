@@ -11,17 +11,21 @@ import { createAccessControl } from "better-auth/plugins/access";
  *
  * The Better Auth organization plugin uses this access-control instance for
  * `hasPermission` checks and for the roles that can be assigned to a school
- * membership. Phase 4 builds on the same statements, so every API can call
- * `requirePermission()` instead of hand-rolling role checks.
+ * membership. Phase 4 builds on these statements so every API can call
+ * centralized middleware functions (`requirePermission`, `requireRole`) instead
+ * of hand-rolling role checks.
  */
 export const statement = {
   ...defaultStatements,
-  school: ["read", "update", "manage"],
+  platform: ["read", "manage", "analytics"],
+  school: ["create", "read", "update", "delete", "manage", "suspend", "activate"],
+  subscription: ["create", "read", "update", "delete", "manage"],
   student: ["create", "read", "update", "delete", "manage"],
   teacher: ["create", "read", "update", "delete", "manage"],
   staff: ["create", "read", "update", "delete", "manage"],
   attendance: ["create", "read", "update", "delete"],
   fees: ["create", "read", "update", "delete", "manage"],
+  expense: ["create", "read", "update", "delete", "manage"],
   exam: ["create", "read", "update", "delete", "manage"],
   homework: ["create", "read", "update", "delete"],
   report: ["read", "export"],
@@ -39,20 +43,47 @@ const ALL = Object.fromEntries(
 ) as { [K in keyof typeof statement]: (typeof statement)[K][number][] };
 
 export const roles = {
-  owner: ac.newRole(ALL),
+  /** Platform super administrator: manage all schools, subscriptions, school owners, analytics */
+  super_admin: ac.newRole({
+    ...ALL,
+    platform: ["read", "manage", "analytics"],
+    school: ["create", "read", "update", "delete", "manage", "suspend", "activate"],
+    subscription: ["create", "read", "update", "delete", "manage"],
+  }),
+
+  /** School owner: full access within their school, manage school admins, staff, settings */
+  owner: ac.newRole({
+    ...ALL,
+    platform: [],
+    school: ["read", "update", "manage"],
+    subscription: ["read"],
+  }),
+
+  /** School administrator: full operational access to school modules, students, staff, classes */
   admin: ac.newRole({
     ...ALL,
-    // Organization settings are owned by the school owner.
+    platform: [],
     organization: ["update"],
+    school: ["read", "update"],
+    subscription: ["read"],
+    setting: ["read", "update"],
+    system: ["read", "backup"],
+    member: ["create", "update"],
+    invitation: ["create", "cancel"],
   }),
+
+  /** Teacher: manage assigned classes, attendance, exams, homework, lessons, view student records */
   teacher: ac.newRole({
     organization: [],
+    platform: [],
     school: ["read"],
+    subscription: [],
     student: ["read"],
     teacher: ["read"],
     staff: [],
     attendance: ["create", "read", "update"],
     fees: [],
+    expense: [],
     exam: ["create", "read", "update"],
     homework: ["create", "read", "update", "delete"],
     report: ["read"],
@@ -66,14 +97,19 @@ export const roles = {
     team: [],
     ac: [],
   }),
+
+  /** Accountant: manage fees, payments, expenses, financial reports; cannot access admin settings */
   accountant: ac.newRole({
     organization: [],
+    platform: [],
     school: ["read"],
+    subscription: [],
     student: ["read"],
     teacher: [],
     staff: [],
     attendance: [],
     fees: ["create", "read", "update", "delete", "manage"],
+    expense: ["create", "read", "update", "delete", "manage"],
     exam: [],
     homework: [],
     report: ["read", "export"],
@@ -87,14 +123,19 @@ export const roles = {
     team: [],
     ac: [],
   }),
+
+  /** Staff: create and read permitted records; cannot delete or perform unauthorized updates */
   staff: ac.newRole({
     organization: [],
+    platform: [],
     school: ["read"],
+    subscription: [],
     student: ["create", "read", "update"],
-    teacher: [],
-    staff: [],
+    teacher: ["read"],
+    staff: ["read"],
     attendance: ["create", "read", "update"],
     fees: [],
+    expense: [],
     exam: ["read"],
     homework: ["read"],
     report: ["read"],
@@ -108,14 +149,19 @@ export const roles = {
     team: [],
     ac: [],
   }),
+
+  /** General member (e.g. student or parent): basic read-only access */
   member: ac.newRole({
     organization: [],
+    platform: [],
     school: ["read"],
+    subscription: [],
     student: ["read"],
     teacher: ["read"],
     staff: [],
     attendance: ["read"],
     fees: [],
+    expense: [],
     exam: ["read"],
     homework: ["read"],
     report: ["read"],
@@ -137,11 +183,11 @@ export type SchoolRole = keyof typeof roles;
 export const betterAuthDefaultRoles = { admin: adminAc, owner: ownerAc, member: memberAc };
 
 const ROLE_ALIASES: Record<string, SchoolRole> = {
+  super_admin: "super_admin",
+  superadmin: "super_admin",
   owner: "owner",
   school_owner: "owner",
   schoolowner: "owner",
-  super_admin: "owner",
-  superadmin: "owner",
   admin: "admin",
   school_admin: "admin",
   schooladmin: "admin",
@@ -174,12 +220,81 @@ export type PermissionRequest = {
   [resource: string]: string[] | { actions: string[]; connector?: "AND" | "OR" } | undefined;
 };
 
+/**
+ * Parses string permission keys into formal PermissionRequest statements.
+ * Examples:
+ *   "student.create" -> { student: ["create"] }
+ *   "attendance.read" -> { attendance: ["read"] }
+ *   "fees.delete" -> { fees: ["delete"] }
+ *   "reports.read" -> { report: ["read"] }
+ *   "settings.update" -> { setting: ["update"] }
+ *   "staff.manage" -> { staff: ["manage"] }
+ * Also supports legacy group identifiers like "stu", "fees", "att", "sys".
+ */
+export function parsePermissionKey(permission: string): PermissionRequest {
+  const trimmed = permission.trim().toLowerCase();
+
+  // Legacy module group mapping
+  if (trimmed === "stu") return { student: ["read"] };
+  if (trimmed === "fees") return { fees: ["read"] };
+  if (trimmed === "att") return { attendance: ["read"] };
+  if (trimmed === "exam") return { exam: ["read"] };
+  if (trimmed === "rep") return { report: ["read"] };
+  if (trimmed === "exp") return { expense: ["read"] };
+  if (trimmed === "hw") return { homework: ["read"] };
+  if (trimmed === "lib") return { library: ["read"] };
+  if (trimmed === "trans") return { transport: ["read"] };
+  if (trimmed === "comm") return { communication: ["read"] };
+  if (trimmed === "sys") return { system: ["read"] };
+  if (trimmed === "front") return { student: ["read"] };
+  if (trimmed === "acad") return { student: ["read"] };
+  if (trimmed === "lesson") return { homework: ["read"] };
+  if (trimmed === "cert") return { student: ["read"] };
+  if (trimmed === "inv") return { library: ["read"] };
+  if (trimmed === "hostel") return { student: ["read"] };
+  if (trimmed === "online") return { exam: ["read"] };
+  if (trimmed === "dl") return { report: ["read"] };
+  if (trimmed === "set" || trimmed === "settings") return { setting: ["read"] };
+
+  const [rawResource, rawAction] = trimmed.split(/[.:]/);
+  const resource =
+    rawResource === "reports" ? "report"
+    : rawResource === "settings" ? "setting"
+    : rawResource === "students" ? "student"
+    : rawResource === "teachers" ? "teacher"
+    : rawResource === "expenses" ? "expense"
+    : rawResource;
+
+  const action = rawAction ?? "read";
+  return { [resource]: [action] };
+}
+
+/**
+ * Checks whether a role satisfies the given permission request or string key.
+ */
 export function roleHasPermission(
   role: string | null | undefined,
-  request: PermissionRequest,
+  request: string | PermissionRequest,
 ): boolean {
-  const definition = roles[normalizeRole(role)];
-  return definition.authorize(request as never).success;
+  const normalized = normalizeRole(role);
+  if (normalized === "super_admin" || normalized === "owner") return true;
+
+  const permRequest = typeof request === "string" ? parsePermissionKey(request) : request;
+  const definition = roles[normalized];
+  if (!definition) return false;
+  return definition.authorize(permRequest as never).success;
+}
+
+/**
+ * Helper to check permissions on any role or user object.
+ */
+export function hasPermission(
+  roleOrUser: string | { role?: string | null } | null | undefined,
+  permission: string | PermissionRequest,
+): boolean {
+  if (!roleOrUser) return false;
+  const role = typeof roleOrUser === "string" ? roleOrUser : roleOrUser.role;
+  return roleHasPermission(role, permission);
 }
 
 /**
@@ -188,6 +303,7 @@ export function roleHasPermission(
  */
 export function uiPermissionsForRole(role: string | null | undefined): string[] | "all" {
   switch (normalizeRole(role)) {
+    case "super_admin":
     case "owner":
     case "admin":
       return "all";

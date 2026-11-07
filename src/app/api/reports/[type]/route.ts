@@ -24,7 +24,7 @@ const ALLOWED = new Set([
 type Ctx = { params: Promise<{ type: string }> };
 
 export const GET = route(async (req: Request, ctx: Ctx) => {
-  await requirePermission("rep");
+  await requirePermission("reports.read");
   const { type } = await ctx.params;
   if (!ALLOWED.has(type)) throw new ApiError(404, "Unknown report.");
   return getReport(type, query(req));

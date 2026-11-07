@@ -160,7 +160,7 @@ export async function requireSchoolContext(): Promise<SchoolContext> {
 
 /** Requires the current membership role to grant every requested action. */
 export async function requireSchoolPermission(
-  request: PermissionRequest,
+  request: PermissionRequest | string,
 ): Promise<SchoolContext> {
   const context = await requireSchoolContext();
   if (!roleHasPermission(context.role, request)) {

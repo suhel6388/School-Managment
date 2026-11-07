@@ -19,7 +19,7 @@ export const GET = route(async () => {
 });
 
 export const PATCH = route(async (req) => {
-  const user = await requirePermission("sys");
+  const user = await requirePermission("settings.update");
   const settings = await updateSettings(await readJson(req), user.username);
   return { settings: serializeModel("Setting", settings) };
 });

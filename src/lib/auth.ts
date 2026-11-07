@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "./prisma";
 import { ApiError } from "./errors";
 import { getBetterAuthIdentity } from "./session";
-import { normalizeRole, uiPermissionsForRole } from "./permissions";
+import { normalizeRole, roleHasPermission, uiPermissionsForRole } from "./permissions";
 
 export const SESSION_COOKIE = "ice_session";
 const MAX_AGE = 60 * 60 * 12; // 12 hours
@@ -122,7 +122,8 @@ export async function userPermissions(user: SessionUser): Promise<string[] | "al
 }
 
 export async function can(user: SessionUser, group: string): Promise<boolean> {
-  if (user.role === "Admin") return true;
+  if (user.role === "Admin" || user.role === "super_admin" || user.role === "owner") return true;
+  if (roleHasPermission(user.role, group)) return true;
   if (user.source === "better-auth") {
     const perms = uiPermissionsForRole(normalizeRole(user.role));
     return perms === "all" || perms.includes(group);
@@ -173,3 +174,12 @@ export function verifyCaptcha(token: string, answer: number): boolean {
     return false;
   }
 }
+
+// Re-export centralized RBAC middleware for easy access
+export {
+  authenticateUser,
+  requireSuperAdmin,
+  requireSchoolMembership,
+  requireRole,
+  hasPermission,
+} from "./rbac";
