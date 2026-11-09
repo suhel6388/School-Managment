@@ -1,11 +1,18 @@
 import { prisma } from "@/lib/prisma";
 import { route } from "@/lib/http";
-import { requireUser } from "@/lib/auth";
+import { requireSchoolMembership } from "@/lib/rbac";
+import { modelHasSchoolId } from "@/lib/tenant";
 
 export type Option = { value: string; label: string; [key: string]: unknown };
 
 export const GET = route(async (req) => {
-  await requireUser();
+  const context = await requireSchoolMembership();
+  const schoolId = context.school.id;
+  const where = (model: string, extra: Record<string, unknown> = {}): any => ({
+    ...(modelHasSchoolId(model) ? { schoolId } : {}),
+    ...extra,
+  });
+
   const wanted = new URL(req.url).searchParams.get("keys");
   const keys = wanted ? new Set(wanted.split(",")) : null;
   const need = (key: string) => !keys || keys.has(key);
@@ -48,74 +55,82 @@ export const GET = route(async (req) => {
   ] = await Promise.all([
     need("classes")
       ? prisma.schoolClass.findMany({
+          where: where("SchoolClass"),
           orderBy: { order: "asc" },
           include: { sections: true },
         })
       : [],
-    need("sections") ? prisma.section.findMany({ orderBy: { name: "asc" } }) : [],
-    need("subjects") ? prisma.subject.findMany({ orderBy: { name: "asc" } }) : [],
+    need("sections") ? prisma.section.findMany({ where: where("Section"), orderBy: { name: "asc" } }) : [],
+    need("subjects") ? prisma.subject.findMany({ where: where("Subject"), orderBy: { name: "asc" } }) : [],
     need("students")
       ? prisma.student.findMany({
-          where: { status: "active" },
+          where: where("Student", { status: "active" }),
           include: { class: true, section: true },
           orderBy: { name: "asc" },
           take: 3000,
         })
       : [],
     need("staff")
-      ? prisma.staff.findMany({ where: { status: "active" }, orderBy: { name: "asc" } })
+      ? prisma.staff.findMany({ where: where("Staff", { status: "active" }), orderBy: { name: "asc" } })
       : [],
-    need("feeGroups") ? prisma.feeGroup.findMany({ orderBy: { name: "asc" } }) : [],
-    need("feeTypes") ? prisma.feeType.findMany({ orderBy: { name: "asc" } }) : [],
-    need("examGroups") ? prisma.examGroup.findMany({ orderBy: { name: "asc" } }) : [],
-    need("departments") ? prisma.department.findMany({ orderBy: { name: "asc" } }) : [],
-    need("designations") ? prisma.designation.findMany({ orderBy: { name: "asc" } }) : [],
-    need("leaveTypes") ? prisma.leaveType.findMany({ orderBy: { name: "asc" } }) : [],
-    need("books") ? prisma.book.findMany({ orderBy: { title: "asc" } }) : [],
+    need("feeGroups") ? prisma.feeGroup.findMany({ where: where("FeeGroup"), orderBy: { name: "asc" } }) : [],
+    need("feeTypes") ? prisma.feeType.findMany({ where: where("FeeType"), orderBy: { name: "asc" } }) : [],
+    need("examGroups") ? prisma.examGroup.findMany({ where: where("ExamGroup"), orderBy: { name: "asc" } }) : [],
+    need("departments") ? prisma.department.findMany({ where: where("Department"), orderBy: { name: "asc" } }) : [],
+    need("designations") ? prisma.designation.findMany({ where: where("Designation"), orderBy: { name: "asc" } }) : [],
+    need("leaveTypes") ? prisma.leaveType.findMany({ where: where("LeaveType"), orderBy: { name: "asc" } }) : [],
+    need("books") ? prisma.book.findMany({ where: where("Book"), orderBy: { title: "asc" } }) : [],
     need("members")
-      ? prisma.libraryMember.findMany({ orderBy: { card: "asc" } })
+      ? prisma.libraryMember.findMany({ where: where("LibraryMember"), orderBy: { card: "asc" } })
       : [],
-    need("items") ? prisma.item.findMany({ orderBy: { name: "asc" } }) : [],
-    need("itemCats") ? prisma.itemCategory.findMany({ orderBy: { name: "asc" } }) : [],
-    need("stores") ? prisma.itemStore.findMany({ orderBy: { name: "asc" } }) : [],
-    need("suppliers") ? prisma.itemSupplier.findMany({ orderBy: { name: "asc" } }) : [],
-    need("routes") ? prisma.transportRoute.findMany({ orderBy: { name: "asc" } }) : [],
-    need("pickups") ? prisma.pickupPoint.findMany({ orderBy: { name: "asc" } }) : [],
-    need("hostels") ? prisma.hostel.findMany({ orderBy: { name: "asc" } }) : [],
-    need("roomTypes") ? prisma.roomType.findMany({ orderBy: { name: "asc" } }) : [],
+    need("items") ? prisma.item.findMany({ where: where("Item"), orderBy: { name: "asc" } }) : [],
+    need("itemCats") ? prisma.itemCategory.findMany({ where: where("ItemCategory"), orderBy: { name: "asc" } }) : [],
+    need("stores") ? prisma.itemStore.findMany({ where: where("ItemStore"), orderBy: { name: "asc" } }) : [],
+    need("suppliers") ? prisma.itemSupplier.findMany({ where: where("ItemSupplier"), orderBy: { name: "asc" } }) : [],
+    need("routes") ? prisma.transportRoute.findMany({ where: where("TransportRoute"), orderBy: { name: "asc" } }) : [],
+    need("pickups") ? prisma.pickupPoint.findMany({ where: where("PickupPoint"), orderBy: { name: "asc" } }) : [],
+    need("hostels") ? prisma.hostel.findMany({ where: where("Hostel"), orderBy: { name: "asc" } }) : [],
+    need("roomTypes") ? prisma.roomType.findMany({ where: where("RoomType"), orderBy: { name: "asc" } }) : [],
     need("rooms")
-      ? prisma.room.findMany({ include: { hostel: true, type: true }, orderBy: { roomNo: "asc" } })
+      ? prisma.room.findMany({ where: where("Room"), include: { hostel: true, type: true }, orderBy: { roomNo: "asc" } })
       : [],
-    need("feeDiscounts") ? prisma.feeDiscount.findMany({ orderBy: { name: "asc" } }) : [],
-    need("sessions") ? prisma.academicSession.findMany({ orderBy: { name: "desc" } }) : [],
-    need("categories") ? prisma.studentCategory.findMany({ orderBy: { name: "asc" } }) : [],
-    need("houses") ? prisma.studentHouse.findMany({ orderBy: { name: "asc" } }) : [],
-    need("disReasons") ? prisma.disableReason.findMany({ orderBy: { name: "asc" } }) : [],
-    need("expenseHeads") ? prisma.expenseHead.findMany({ orderBy: { name: "asc" } }) : [],
-    need("contentTypes") ? prisma.contentType.findMany({ orderBy: { name: "asc" } }) : [],
-    need("roles") ? prisma.role.findMany({ orderBy: { name: "asc" } }) : [],
-    need("templates") ? prisma.certificateTemplate.findMany({ orderBy: { name: "asc" } }) : [],
+    need("feeDiscounts") ? prisma.feeDiscount.findMany({ where: where("FeeDiscount"), orderBy: { name: "asc" } }) : [],
+    need("sessions") ? prisma.academicSession.findMany({ where: where("AcademicSession"), orderBy: { name: "desc" } }) : [],
+    need("categories") ? prisma.studentCategory.findMany({ where: where("StudentCategory"), orderBy: { name: "asc" } }) : [],
+    need("houses") ? prisma.studentHouse.findMany({ where: where("StudentHouse"), orderBy: { name: "asc" } }) : [],
+    need("disReasons") ? prisma.disableReason.findMany({ where: where("DisableReason"), orderBy: { name: "asc" } }) : [],
+    need("expenseHeads") ? prisma.expenseHead.findMany({ where: where("ExpenseHead"), orderBy: { name: "asc" } }) : [],
+    need("contentTypes") ? prisma.contentType.findMany({ where: where("ContentType"), orderBy: { name: "asc" } }) : [],
+    need("roles") ? prisma.role.findMany({ where: where("Role"), orderBy: { name: "asc" } }) : [],
+    need("templates") ? prisma.certificateTemplate.findMany({ where: where("CertificateTemplate"), orderBy: { name: "asc" } }) : [],
     need("sources") || need("purposes") || need("complaintTypes") || need("references")
-      ? prisma.frontOfficeSetup.findMany({ orderBy: { name: "asc" } })
+      ? prisma.frontOfficeSetup.findMany({ where: where("FrontOfficeSetup"), orderBy: { name: "asc" } })
       : [],
     need("lessons")
       ? prisma.lesson.findMany({
+          where: where("Lesson"),
           include: { subject: true, class: true },
           orderBy: { name: "asc" },
         })
       : [],
-    need("vehicles") ? prisma.vehicle.findMany({ orderBy: { number: "asc" } }) : [],
+    need("vehicles") ? prisma.vehicle.findMany({ where: where("Vehicle"), orderBy: { number: "asc" } }) : [],
   ]);
 
   const memberNames = new Map<string, string>();
   if (need("members") && members.length) {
     const [studentRefs, staffRefs] = await Promise.all([
       prisma.student.findMany({
-        where: { id: { in: members.filter((m) => m.kind === "student").map((m) => m.refId) } },
+        where: {
+          id: { in: members.filter((m) => m.kind === "student").map((m) => m.refId) },
+          ...(modelHasSchoolId("Student") ? { schoolId } : {}),
+        },
         select: { id: true, name: true, admNo: true },
       }),
       prisma.staff.findMany({
-        where: { id: { in: members.filter((m) => m.kind === "staff").map((m) => m.refId) } },
+        where: {
+          id: { in: members.filter((m) => m.kind === "staff").map((m) => m.refId) },
+          ...(modelHasSchoolId("Staff") ? { schoolId } : {}),
+        },
         select: { id: true, name: true, empId: true },
       }),
     ]);

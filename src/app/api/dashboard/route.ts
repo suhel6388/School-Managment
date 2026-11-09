@@ -1,8 +1,8 @@
 import { route } from "@/lib/http";
-import { requireUser } from "@/lib/auth";
+import { requireSchoolMembership } from "@/lib/rbac";
 import { dashboardData } from "@/lib/dashboard";
 
 export const GET = route(async () => {
-  await requireUser();
-  return dashboardData();
+  const context = await requireSchoolMembership();
+  return dashboardData(context.school.id);
 });

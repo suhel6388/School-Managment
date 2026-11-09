@@ -2,6 +2,7 @@ import { Prisma } from "@/lib/prisma-client";
 import { prisma } from "./prisma";
 import { ApiError } from "./errors";
 import { toYmd } from "./dates";
+import { resolveSchoolContext, assertSameSchool, modelHasSchoolId } from "./tenant";
 
 type Grade = { name: string; from: number; to: number; point: number; remark: string };
 type Division = { name: string; from: number; to: number };
@@ -74,25 +75,52 @@ export async function marksheetsForClass(
   groupId: string,
   classId: string,
   sectionId?: string,
+  tenantSchoolId?: string,
 ): Promise<Marksheet[]> {
+  const tenantCtx = await resolveSchoolContext();
+  const schoolId = tenantSchoolId ?? tenantCtx?.school.id;
+
+  const studentWhere: Record<string, unknown> = {
+    classId,
+    status: "active",
+    ...(sectionId ? { sectionId } : {}),
+  };
+  if (schoolId && modelHasSchoolId("Student")) studentWhere.schoolId = schoolId;
+
+  const scheduleWhere: Record<string, unknown> = { groupId, classId };
+  if (schoolId && modelHasSchoolId("ExamSchedule")) scheduleWhere.schoolId = schoolId;
+
+  const gradeWhere: Record<string, unknown> = {};
+  if (schoolId && modelHasSchoolId("Grade")) gradeWhere.schoolId = schoolId;
+
+  const divisionWhere: Record<string, unknown> = {};
+  if (schoolId && modelHasSchoolId("Division")) divisionWhere.schoolId = schoolId;
+
   const [grades, divisions, students, schedules] = await Promise.all([
-    prisma.grade.findMany({ orderBy: { from: "desc" } }),
-    prisma.division.findMany({ orderBy: { from: "desc" } }),
+    prisma.grade.findMany({ where: gradeWhere, orderBy: { from: "desc" } }),
+    prisma.division.findMany({ where: divisionWhere, orderBy: { from: "desc" } }),
     prisma.student.findMany({
-      where: { classId, status: "active", ...(sectionId ? { sectionId } : {}) },
+      where: studentWhere,
       include: { class: true, section: true },
       orderBy: { name: "asc" },
     }),
     prisma.examSchedule.findMany({
-      where: { groupId, classId },
+      where: scheduleWhere,
       include: { subject: true },
       orderBy: { date: "asc" },
     }),
   ]);
 
-  const results = schedules.length
+  const scopedStudents = schoolId
+    ? students.filter((s: Record<string, unknown>) => !s.schoolId || s.schoolId === schoolId)
+    : students;
+  const scopedSchedules = schoolId
+    ? schedules.filter((s: Record<string, unknown>) => !s.schoolId || s.schoolId === schoolId)
+    : schedules;
+
+  const results = scopedSchedules.length
     ? await prisma.examResult.findMany({
-        where: { schedId: { in: schedules.map((s) => s.id) } },
+        where: { schedId: { in: scopedSchedules.map((s) => s.id) } },
       })
     : [];
   const resultMap = new Map(results.map((r) => [`${r.schedId}|${r.studentId}`, r]));
@@ -177,9 +205,16 @@ export async function getMarksheets(groupId: string, classId: string, studentIds
 export async function saveExamResults(
   scheduleId: string,
   records: { studentId: string; marks: number | null; absent: boolean }[],
+  tenantSchoolId?: string,
 ) {
+  const tenantCtx = await resolveSchoolContext();
+  const schoolId = tenantSchoolId ?? tenantCtx?.school.id;
+
   const schedule = await prisma.examSchedule.findUnique({ where: { id: scheduleId } });
   if (!schedule) throw new ApiError(404, "Exam schedule not found.");
+  if (tenantCtx && (schedule as Record<string, unknown>).schoolId) {
+    assertSameSchool(tenantCtx, String((schedule as Record<string, unknown>).schoolId));
+  }
 
   const seen = new Set<string>();
   for (const record of records) {
@@ -198,24 +233,33 @@ export async function saveExamResults(
   }
 
   return prisma.$transaction(async (tx) => {
+    const studentWhere: Record<string, unknown> = {
+      id: { in: records.map((r) => r.studentId) },
+      classId: schedule.classId,
+    };
+    if (schoolId && modelHasSchoolId("Student")) studentWhere.schoolId = schoolId;
+
     const valid = await tx.student.count({
-      where: { id: { in: records.map((r) => r.studentId) }, classId: schedule.classId },
+      where: studentWhere,
     });
     if (valid !== records.length) {
       throw new ApiError(422, "Marks can only be entered for students of this exam's class.");
     }
     let saved = 0;
     for (const record of records) {
+      const createData: Record<string, unknown> = {
+        schedId: scheduleId,
+        studentId: record.studentId,
+        marks: new Prisma.Decimal(record.absent ? 0 : (record.marks ?? 0)),
+        absent: record.absent,
+      };
+      if (schoolId && modelHasSchoolId("ExamResult")) createData.schoolId = schoolId;
+
       await tx.examResult.upsert({
         where: {
           schedId_studentId: { schedId: scheduleId, studentId: record.studentId },
         },
-        create: {
-          schedId: scheduleId,
-          studentId: record.studentId,
-          marks: new Prisma.Decimal(record.absent ? 0 : (record.marks ?? 0)),
-          absent: record.absent,
-        },
+        create: createData as any,
         update: {
           marks: new Prisma.Decimal(record.absent ? 0 : (record.marks ?? 0)),
           absent: record.absent,
@@ -227,22 +271,43 @@ export async function saveExamResults(
   });
 }
 
-export async function admitCardData(groupId: string, classId: string, studentIds: string[]) {
+export async function admitCardData(
+  groupId: string,
+  classId: string,
+  studentIds: string[],
+  tenantSchoolId?: string,
+) {
+  const tenantCtx = await resolveSchoolContext();
+  const schoolId = tenantSchoolId ?? tenantCtx?.school.id;
+
+  const scheduleWhere: Record<string, unknown> = { groupId, classId };
+  if (schoolId && modelHasSchoolId("ExamSchedule")) scheduleWhere.schoolId = schoolId;
+
+  const studentWhere: Record<string, unknown> = { id: { in: studentIds } };
+  if (schoolId && modelHasSchoolId("Student")) studentWhere.schoolId = schoolId;
+
+  const templateWhere: Record<string, unknown> = {};
+  if (schoolId && modelHasSchoolId("AdmitTemplate")) templateWhere.schoolId = schoolId;
+  else templateWhere.id = 1;
+
   const [group, template, schedules, students] = await Promise.all([
     prisma.examGroup.findUnique({ where: { id: groupId } }),
-    prisma.admitTemplate.findUnique({ where: { id: 1 } }),
+    prisma.admitTemplate.findFirst({ where: templateWhere }),
     prisma.examSchedule.findMany({
-      where: { groupId, classId },
+      where: scheduleWhere,
       include: { subject: true },
       orderBy: { date: "asc" },
     }),
     prisma.student.findMany({
-      where: { id: { in: studentIds } },
+      where: studentWhere,
       include: { class: true, section: true },
       orderBy: { name: "asc" },
     }),
   ]);
   if (!group) throw new ApiError(404, "Exam group not found.");
+  if (tenantCtx && (group as Record<string, unknown>).schoolId) {
+    assertSameSchool(tenantCtx, String((group as Record<string, unknown>).schoolId));
+  }
   return {
     group: group.name,
     template: template ?? {

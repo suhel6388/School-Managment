@@ -1,8 +1,8 @@
 import { route } from "@/lib/http";
-import { requireUser } from "@/lib/auth";
+import { requireSchoolMembership } from "@/lib/rbac";
 import { alertsOnly } from "@/lib/dashboard";
 
 export const GET = route(async () => {
-  await requireUser();
-  return { alerts: await alertsOnly() };
+  const context = await requireSchoolMembership();
+  return { alerts: await alertsOnly(context.school.id) };
 });

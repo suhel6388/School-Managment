@@ -263,6 +263,7 @@ export function parsePermissionKey(permission: string): PermissionRequest {
     : rawResource === "students" ? "student"
     : rawResource === "teachers" ? "teacher"
     : rawResource === "expenses" ? "expense"
+    : rawResource === "lesson" || rawResource === "lessons" ? "homework"
     : rawResource;
 
   const action = rawAction ?? "read";

@@ -201,16 +201,19 @@ function studentBase(student: {
   };
 }
 
-export async function getStudentFees(studentId: string) {
-  return loadStudentFees(prisma, studentId);
+export async function getStudentFees(studentId: string, tenantSchoolId?: string) {
+  return loadStudentFees(prisma, studentId, tenantSchoolId);
 }
 
-async function loadStudentFees(db: Db, studentId: string) {
+async function loadStudentFees(db: Db, studentId: string, tenantSchoolId?: string) {
   const student = await db.student.findUnique({
     where: { id: studentId },
     include: { class: true, section: true },
   });
   if (!student) throw new ApiError(404, "Student not found.");
+  if (tenantSchoolId) {
+    assertSameSchool(tenantSchoolId, (student as any).schoolId);
+  }
 
   const [masters, carries, assignments, payments] = await Promise.all([
     db.feeMaster.findMany({
@@ -240,22 +243,59 @@ async function loadStudentFees(db: Db, studentId: string) {
   return { student: base, rows, totals: totalsOf(rows) };
 }
 
-export async function loadAllFeeData() {
+export async function loadAllFeeData(tenantSchoolId?: string) {
+  const tenantCtx = await resolveSchoolContext();
+  const schoolId = tenantSchoolId ?? tenantCtx?.school.id;
+
+  const studentWhere: Record<string, unknown> = { status: "active" };
+  if (schoolId && modelHasSchoolId("Student")) studentWhere.schoolId = schoolId;
+
+  const masterWhere: Record<string, unknown> = {};
+  if (schoolId && modelHasSchoolId("FeeMaster")) masterWhere.schoolId = schoolId;
+
+  const carryWhere: Record<string, unknown> = {};
+  if (schoolId && modelHasSchoolId("CarryForward")) carryWhere.schoolId = schoolId;
+
+  const assignmentWhere: Record<string, unknown> = {};
+  if (schoolId && modelHasSchoolId("TransportAssignment")) assignmentWhere.schoolId = schoolId;
+
+  const feeWhere: Record<string, unknown> = {};
+  if (schoolId && modelHasSchoolId("TransportFee")) feeWhere.schoolId = schoolId;
+
+  const paymentWhere: Record<string, unknown> = {};
+  if (schoolId && modelHasSchoolId("Payment")) paymentWhere.schoolId = schoolId;
+
   const [students, masters, carries, assignments, transportFees, payments] = await Promise.all([
     prisma.student.findMany({
-      where: { status: "active" },
+      where: studentWhere,
       include: { class: true, section: true },
       orderBy: { name: "asc" },
     }),
-    prisma.feeMaster.findMany({ include: { type: true, group: true }, orderBy: { due: "asc" } }),
-    prisma.carryForward.findMany(),
-    prisma.transportAssignment.findMany({ include: { pickup: true } }),
-    prisma.transportFee.findMany(),
-    prisma.payment.findMany(),
+    prisma.feeMaster.findMany({ where: masterWhere, include: { type: true, group: true }, orderBy: { due: "asc" } }),
+    prisma.carryForward.findMany({ where: carryWhere }),
+    prisma.transportAssignment.findMany({ where: assignmentWhere, include: { pickup: true } }),
+    prisma.transportFee.findMany({ where: feeWhere }),
+    prisma.payment.findMany({ where: paymentWhere }),
   ]);
 
+  const scopedStudents = schoolId
+    ? students.filter((s: Record<string, unknown>) => !s.schoolId || s.schoolId === schoolId)
+    : students;
+  const scopedMasters = schoolId
+    ? masters.filter((m: Record<string, unknown>) => !m.schoolId || m.schoolId === schoolId)
+    : masters;
+  const scopedCarries = schoolId
+    ? carries.filter((c: Record<string, unknown>) => !c.schoolId || c.schoolId === schoolId)
+    : carries;
+  const scopedAssignments = schoolId
+    ? assignments.filter((a: Record<string, unknown>) => !a.schoolId || a.schoolId === schoolId)
+    : assignments;
+  const scopedPayments = schoolId
+    ? payments.filter((p: Record<string, unknown>) => !p.schoolId || p.schoolId === schoolId)
+    : payments;
+
   const mastersByClass = new Map<string, MasterRow[]>();
-  for (const master of masters) {
+  for (const master of scopedMasters) {
     const list = mastersByClass.get(master.classId) ?? [];
     list.push(master);
     mastersByClass.set(master.classId, list);
@@ -267,7 +307,7 @@ export async function loadAllFeeData() {
     ]),
   );
 
-  return students.map((student) => {
+  return scopedStudents.map((student) => {
     const base = studentBase({
       ...student,
       className: student.class?.name ?? null,
@@ -276,29 +316,32 @@ export async function loadAllFeeData() {
     const rows = buildRows(
       base,
       mastersByClass.get(student.classId ?? "") ?? [],
-      carries,
-      assignments,
+      scopedCarries,
+      scopedAssignments,
       feeMap,
-      payments,
+      scopedPayments,
     );
     return { student: base, rows, totals: totalsOf(rows) };
   });
 }
 
-export async function pendingFees() {
-  const all = await loadAllFeeData();
+export async function pendingFees(tenantSchoolId?: string) {
+  const all = await loadAllFeeData(tenantSchoolId);
   return all
     .map((item) => ({ ...item, dueNow: item.totals.due }))
     .filter((item) => item.dueNow > 0)
     .sort((a, b) => b.dueNow - a.dueNow);
 }
 
-export async function dueFeeRows(opts: {
-  classId?: string;
-  sectionId?: string;
-  type?: string;
-}) {
-  const all = await loadAllFeeData();
+export async function dueFeeRows(
+  opts: {
+    classId?: string;
+    sectionId?: string;
+    type?: string;
+  },
+  tenantSchoolId?: string,
+) {
+  const all = await loadAllFeeData(tenantSchoolId);
   const out: {
     studentId: string;
     student: string;
@@ -507,6 +550,8 @@ export async function collectAllDues(input: {
   date?: string;
   username: string;
 }) {
+  const tenantCtx = await resolveSchoolContext();
+  const schoolId = tenantCtx?.school.id;
   const { rows, student, totals } = await getStudentFees(input.studentId);
   const payable = rows.filter((r) => r.bal > 0);
   if (!payable.length) throw new ApiError(409, "There is nothing to collect for this student.");
@@ -522,51 +567,62 @@ export async function collectAllDues(input: {
         create: { key: "receipt", value: 1001 },
         update: { value: { increment: 1 } },
       });
+      const paymentData: Record<string, unknown> = {
+        rc: `RCPT-${counter.value}`,
+        studentId: input.studentId,
+        feeKey: row.key,
+        amount: new D(row.bal),
+        discount: new D(0),
+        fine: new D(0),
+        mode: input.mode,
+        date,
+        note: "Collected in bulk",
+      };
+      if (schoolId && modelHasSchoolId("Payment")) paymentData.schoolId = schoolId;
       const payment = await tx.payment.create({
-        data: {
-          rc: `RCPT-${counter.value}`,
-          studentId: input.studentId,
-          feeKey: row.key,
-          amount: new D(row.bal),
-          discount: new D(0),
-          fine: new D(0),
-          mode: input.mode,
-          date,
-          note: "Collected in bulk",
-        },
+        data: paymentData as any,
       });
       created.push(payment.rc);
     }
+    const auditData: Record<string, unknown> = {
+      user: input.username,
+      act: "collect",
+      entity: "fees",
+      description: `${student.name} bulk ₹${totals.bal.toFixed(2)}`,
+    };
+    if (schoolId && modelHasSchoolId("AuditLog")) auditData.schoolId = schoolId;
     await tx.auditLog.create({
-      data: {
-        user: input.username,
-        act: "collect",
-        entity: "fees",
-        description: `${student.name} bulk ₹${totals.bal.toFixed(2)}`,
-      },
+      data: auditData as any,
     });
     return { collected: totals.bal, receipts: created, count: created.length };
   });
 }
 
 export async function revertPayment(paymentId: string, username: string) {
+  const tenantCtx = await resolveSchoolContext();
   return prisma.$transaction(async (tx) => {
     const payment = await tx.payment.findUnique({ where: { id: paymentId } });
     if (!payment) throw new ApiError(404, "Payment not found.");
+    if (tenantCtx && (payment as Record<string, unknown>).schoolId) {
+      assertSameSchool(tenantCtx, String((payment as Record<string, unknown>).schoolId));
+    }
     await tx.payment.delete({ where: { id: paymentId } });
+    const auditData: Record<string, unknown> = {
+      user: username,
+      act: "revert",
+      entity: "payment",
+      description: `${payment.rc} ₹${money(payment.amount).toFixed(2)}`,
+    };
+    if (tenantCtx?.school.id && modelHasSchoolId("AuditLog")) auditData.schoolId = tenantCtx.school.id;
     await tx.auditLog.create({
-      data: {
-        user: username,
-        act: "revert",
-        entity: "payment",
-        description: `${payment.rc} ₹${money(payment.amount).toFixed(2)}`,
-      },
+      data: auditData as any,
     });
     return { ok: true };
   });
 }
 
 export async function paymentReceipt(paymentId: string) {
+  const tenantCtx = await resolveSchoolContext();
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
     include: {
@@ -574,6 +630,9 @@ export async function paymentReceipt(paymentId: string) {
     },
   });
   if (!payment) throw new ApiError(404, "Payment not found.");
+  if (tenantCtx && (payment as Record<string, unknown>).schoolId) {
+    assertSameSchool(tenantCtx, String((payment as Record<string, unknown>).schoolId));
+  }
   const { rows } = await getStudentFees(payment.studentId);
   const row = rows.find((r) => r.key === payment.feeKey);
   return {
@@ -600,23 +659,38 @@ export async function paymentReceipt(paymentId: string) {
 }
 
 export async function bankPaymentAction(id: string, action: "approve" | "reject", username: string) {
+  const tenantCtx = await resolveSchoolContext();
+  const schoolId = tenantCtx?.school.id;
   return prisma.$transaction(async (tx) => {
     const bank = await tx.bankPayment.findUnique({ where: { id } });
     if (!bank) throw new ApiError(404, "Bank payment not found.");
+    if (tenantCtx && (bank as Record<string, unknown>).schoolId) {
+      assertSameSchool(tenantCtx, String((bank as Record<string, unknown>).schoolId));
+    }
     if (bank.status !== "Pending") throw new ApiError(409, "This payment has already been processed.");
     if (action === "reject") {
       const updated = await tx.bankPayment.update({
         where: { id },
         data: { status: "Rejected" },
       });
+      const auditData: Record<string, unknown> = {
+        user: username,
+        act: "reject",
+        entity: "bank-payment",
+        description: bank.ref,
+      };
+      if (schoolId && modelHasSchoolId("AuditLog")) auditData.schoolId = schoolId;
       await tx.auditLog.create({
-        data: { user: username, act: "reject", entity: "bank-payment", description: bank.ref },
+        data: auditData as any,
       });
       return { status: updated.status, posted: 0 };
     }
 
     const student = await tx.student.findUnique({ where: { id: bank.studentId } });
     if (!student) throw new ApiError(404, "Student not found.");
+    if (tenantCtx && (student as Record<string, unknown>).schoolId) {
+      assertSameSchool(tenantCtx, String((student as Record<string, unknown>).schoolId));
+    }
 
     const { rows } = await loadStudentFees(tx, bank.studentId);
     const target = rows.find((r) => r.bal > 0);
@@ -628,27 +702,32 @@ export async function bankPaymentAction(id: string, action: "approve" | "reject"
       create: { key: "receipt", value: 1001 },
       update: { value: { increment: 1 } },
     });
+    const paymentData: Record<string, unknown> = {
+      rc: `RCPT-${counter.value}`,
+      studentId: bank.studentId,
+      feeKey: target.key,
+      amount: r2(amount),
+      discount: new D(0),
+      fine: new D(0),
+      mode: "Bank Transfer",
+      date: bank.date,
+      note: `Bank ref ${bank.ref}`,
+    };
+    if (schoolId && modelHasSchoolId("Payment")) paymentData.schoolId = schoolId;
+
     await tx.payment.create({
-      data: {
-        rc: `RCPT-${counter.value}`,
-        studentId: bank.studentId,
-        feeKey: target.key,
-        amount: r2(amount),
-        discount: new D(0),
-        fine: new D(0),
-        mode: "Bank Transfer",
-        date: bank.date,
-        note: `Bank ref ${bank.ref}`,
-      },
+      data: paymentData as any,
     });
     await tx.bankPayment.update({ where: { id }, data: { status: "Approved" } });
+    const auditData: Record<string, unknown> = {
+      user: username,
+      act: "approve",
+      entity: "bank-payment",
+      description: `${bank.ref} ₹${money(amount).toFixed(2)}`,
+    };
+    if (schoolId && modelHasSchoolId("AuditLog")) auditData.schoolId = schoolId;
     await tx.auditLog.create({
-      data: {
-        user: username,
-        act: "approve",
-        entity: "bank-payment",
-        description: `${bank.ref} ₹${money(amount).toFixed(2)}`,
-      },
+      data: auditData as any,
     });
     return { status: "Approved", posted: money(amount), fee: target.name };
   });

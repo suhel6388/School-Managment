@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { ApiError } from "./errors";
 import { parseYmd } from "./dates";
+import { modelHasSchoolId, assertSameSchool } from "./tenant";
 
 export const DEFAULT_SETTINGS = {
   name: "ICE School",
@@ -18,7 +19,30 @@ export const DEFAULT_SETTINGS = {
   planExpires: "2027-03-31",
 };
 
-export async function getSettings() {
+export async function getSettings(schoolId?: string) {
+  if (schoolId && modelHasSchoolId("Setting")) {
+    let settings = await (prisma.setting as any).findFirst({ where: { schoolId } });
+    if (!settings) {
+      settings = await (prisma.setting as any).create({
+        data: {
+          schoolId,
+          name: DEFAULT_SETTINGS.name,
+          address: DEFAULT_SETTINGS.address,
+          phone: DEFAULT_SETTINGS.phone,
+          email: DEFAULT_SETTINGS.email,
+          session: DEFAULT_SETTINGS.session,
+          headerText: DEFAULT_SETTINGS.headerText,
+          footerText: DEFAULT_SETTINGS.footerText,
+          captcha: DEFAULT_SETTINGS.captcha,
+          waMessage: DEFAULT_SETTINGS.waMessage,
+          fileTypes: DEFAULT_SETTINGS.fileTypes,
+          planName: DEFAULT_SETTINGS.planName,
+          planExpires: parseYmd(DEFAULT_SETTINGS.planExpires),
+        },
+      });
+    }
+    return settings;
+  }
   let settings = await prisma.setting.findUnique({ where: { id: 1 } });
   if (!settings) {
     settings = await prisma.setting.create({
@@ -57,8 +81,15 @@ const TEXT_FIELDS = [
 
 const BOOL_FIELDS = ["captcha", "profilePhone", "profileAddr", "profileEmail", "profilePhoto"] as const;
 
-export async function updateSettings(patch: Record<string, unknown>, username: string) {
-  const current = await getSettings();
+export async function updateSettings(
+  patch: Record<string, unknown>,
+  username: string,
+  schoolId?: string,
+) {
+  const current = await getSettings(schoolId);
+  if (schoolId && (current as any).schoolId) {
+    assertSameSchool(schoolId, (current as any).schoolId);
+  }
   const data: Record<string, unknown> = {};
 
   for (const key of TEXT_FIELDS) {
@@ -103,16 +134,29 @@ export async function updateSettings(patch: Record<string, unknown>, username: s
 
   const updated = await prisma.setting.update({ where: { id: current.id }, data });
   await prisma.auditLog.create({
-    data: { user: username, act: "update", entity: "settings", description: Object.keys(data).join(", ") },
+    data: {
+      user: username,
+      act: "update",
+      entity: "settings",
+      description: Object.keys(data).join(", "),
+      ...(modelHasSchoolId("AuditLog") && schoolId ? { schoolId } : {}),
+    },
   });
   return updated;
 }
 
-export async function getTemplates() {
+export async function getTemplates(schoolId?: string) {
+  const hasSchool = modelHasSchoolId("AdmitTemplate") && !!schoolId;
   const [admit, mark, idCard] = await Promise.all([
-    prisma.admitTemplate.findUnique({ where: { id: 1 } }),
-    prisma.markTemplate.findUnique({ where: { id: 1 } }),
-    prisma.idCardTemplate.findUnique({ where: { id: 1 } }),
+    hasSchool
+      ? (prisma.admitTemplate as any).findFirst({ where: { schoolId } })
+      : prisma.admitTemplate.findUnique({ where: { id: 1 } }),
+    hasSchool
+      ? (prisma.markTemplate as any).findFirst({ where: { schoolId } })
+      : prisma.markTemplate.findUnique({ where: { id: 1 } }),
+    hasSchool
+      ? (prisma.idCardTemplate as any).findFirst({ where: { schoolId } })
+      : prisma.idCardTemplate.findUnique({ where: { id: 1 } }),
   ]);
   return {
     admit: admit ?? { title: "ADMIT CARD", exam: "", instructions: "", sign: "Principal" },
@@ -125,6 +169,7 @@ export async function updateTemplate(
   type: "admit" | "mark" | "id",
   patch: Record<string, unknown>,
   username: string,
+  schoolId?: string,
 ) {
   if (type === "admit") {
     const data = {
@@ -133,11 +178,20 @@ export async function updateTemplate(
       instructions: patch.instructions ? String(patch.instructions) : null,
       sign: patch.sign ? String(patch.sign).slice(0, 80) : null,
     };
-    await prisma.admitTemplate.upsert({
-      where: { id: 1 },
-      create: { id: 1, ...data },
-      update: data,
-    });
+    if (modelHasSchoolId("AdmitTemplate") && schoolId) {
+      const existing = await (prisma.admitTemplate as any).findFirst({ where: { schoolId } });
+      if (existing) {
+        await (prisma.admitTemplate as any).update({ where: { id: existing.id }, data });
+      } else {
+        await (prisma.admitTemplate as any).create({ data: { schoolId, ...data } });
+      }
+    } else {
+      await prisma.admitTemplate.upsert({
+        where: { id: 1 },
+        create: { id: 1, ...data },
+        update: data,
+      });
+    }
   } else if (type === "mark") {
     const data = {
       title: String(patch.title ?? "REPORT CARD").slice(0, 80),
@@ -145,11 +199,20 @@ export async function updateTemplate(
       signL: patch.signL ? String(patch.signL).slice(0, 80) : null,
       signR: patch.signR ? String(patch.signR).slice(0, 80) : null,
     };
-    await prisma.markTemplate.upsert({
-      where: { id: 1 },
-      create: { id: 1, ...data },
-      update: data,
-    });
+    if (modelHasSchoolId("MarkTemplate") && schoolId) {
+      const existing = await (prisma.markTemplate as any).findFirst({ where: { schoolId } });
+      if (existing) {
+        await (prisma.markTemplate as any).update({ where: { id: existing.id }, data });
+      } else {
+        await (prisma.markTemplate as any).create({ data: { schoolId, ...data } });
+      }
+    } else {
+      await prisma.markTemplate.upsert({
+        where: { id: 1 },
+        create: { id: 1, ...data },
+        update: data,
+      });
+    }
   } else {
     const color = String(patch.color ?? "#1d3a8a");
     if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw new ApiError(422, "Colour must be a hex value.");
@@ -157,14 +220,29 @@ export async function updateTemplate(
       color,
       validity: patch.validity ? String(patch.validity).slice(0, 80) : null,
     };
-    await prisma.idCardTemplate.upsert({
-      where: { id: 1 },
-      create: { id: 1, ...data },
-      update: data,
-    });
+    if (modelHasSchoolId("IdCardTemplate") && schoolId) {
+      const existing = await (prisma.idCardTemplate as any).findFirst({ where: { schoolId } });
+      if (existing) {
+        await (prisma.idCardTemplate as any).update({ where: { id: existing.id }, data });
+      } else {
+        await (prisma.idCardTemplate as any).create({ data: { schoolId, ...data } });
+      }
+    } else {
+      await prisma.idCardTemplate.upsert({
+        where: { id: 1 },
+        create: { id: 1, ...data },
+        update: data,
+      });
+    }
   }
   await prisma.auditLog.create({
-    data: { user: username, act: "update", entity: "template", description: type },
+    data: {
+      user: username,
+      act: "update",
+      entity: "template",
+      description: type,
+      ...(modelHasSchoolId("AuditLog") && schoolId ? { schoolId } : {}),
+    },
   });
-  return getTemplates();
+  return getTemplates(schoolId);
 }

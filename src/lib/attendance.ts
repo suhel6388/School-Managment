@@ -167,27 +167,47 @@ export async function saveAttendance(input: {
   });
 }
 
-export async function attendanceReport(classId: string, sectionId: string, month: string) {
+export async function attendanceReport(
+  classId: string,
+  sectionId: string,
+  month: string,
+  tenantSchoolId?: string,
+) {
   const start = parseYmd(`${month}-01`);
   if (!start) throw new ApiError(422, "Month must be YYYY-MM.");
+  const tenantCtx = await resolveSchoolContext();
+  const schoolId = tenantSchoolId ?? tenantCtx?.school.id;
+
   const [y, m] = month.split("-").map(Number);
   const end = new Date(Date.UTC(y, m, 0));
+
+  const studentWhere: Record<string, unknown> = {
+    status: "active",
+    ...(classId ? { classId } : {}),
+    ...(sectionId ? { sectionId } : {}),
+  };
+  if (schoolId && modelHasSchoolId("Student")) studentWhere.schoolId = schoolId;
+
   const students = await prisma.student.findMany({
-    where: {
-      status: "active",
-      ...(classId ? { classId } : {}),
-      ...(sectionId ? { sectionId } : {}),
-    },
+    where: studentWhere,
     include: { class: true, section: true },
     orderBy: { name: "asc" },
   });
+
+  const scopedStudents = schoolId
+    ? students.filter((s: Record<string, unknown>) => !s.schoolId || s.schoolId === schoolId)
+    : students;
+
+  const attWhere: Record<string, unknown> = {
+    studentId: { in: scopedStudents.map((s) => s.id) },
+    date: { gte: start, lte: end },
+  };
+  if (schoolId && modelHasSchoolId("StudentAttendance")) attWhere.schoolId = schoolId;
+
   const records = await prisma.studentAttendance.findMany({
-    where: {
-      studentId: { in: students.map((s) => s.id) },
-      date: { gte: start, lte: end },
-    },
+    where: attWhere,
   });
-  return students.map((student) => {
+  return scopedStudents.map((student) => {
     const own = records.filter((r) => r.studentId === student.id);
     const present = own.filter((r) => r.status === "Present").length;
     const absent = own.filter((r) => r.status === "Absent").length;
@@ -206,16 +226,27 @@ export async function attendanceReport(classId: string, sectionId: string, month
   });
 }
 
-export async function todayAttendanceSummary() {
+export async function todayAttendanceSummary(tenantSchoolId?: string) {
   const day = parseYmd(toYmd(new Date()));
   if (!day) return { marked: 0, present: 0, percent: null as number | null };
-  const records = await prisma.studentAttendance.findMany({ where: { date: day } });
-  if (!records.length) return { marked: 0, present: 0, percent: null as number | null };
-  const present = records.filter((r) => r.status === "Present").length;
+
+  const tenantCtx = await resolveSchoolContext();
+  const schoolId = tenantSchoolId ?? tenantCtx?.school.id;
+
+  const attWhere: Record<string, unknown> = { date: day };
+  if (schoolId && modelHasSchoolId("StudentAttendance")) attWhere.schoolId = schoolId;
+
+  const records = await prisma.studentAttendance.findMany({ where: attWhere });
+  const scopedRecords = schoolId
+    ? records.filter((r: Record<string, unknown>) => !r.schoolId || r.schoolId === schoolId)
+    : records;
+
+  if (!scopedRecords.length) return { marked: 0, present: 0, percent: null as number | null };
+  const present = scopedRecords.filter((r) => r.status === "Present").length;
   return {
-    marked: records.length,
+    marked: scopedRecords.length,
     present,
-    percent: Math.round((100 * present) / records.length),
+    percent: Math.round((100 * present) / scopedRecords.length),
   };
 }
 

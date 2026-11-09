@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { route } from "@/lib/http";
-import { requirePermission } from "@/lib/auth";
+import { requireSchoolPermission, assertSameSchool } from "@/lib/tenant";
 import { ApiError } from "@/lib/errors";
 import { getStudentFees } from "@/lib/fees";
 import { toYmd } from "@/lib/dates";
@@ -9,7 +9,7 @@ import { serializeModel } from "@/lib/dmmf";
 type Ctx = { params: Promise<{ id: string }> };
 
 export const GET = route(async (_req: Request, ctx: Ctx) => {
-  await requirePermission("stu");
+  const context = await requireSchoolPermission("student.read");
   const { id } = await ctx.params;
 
   const student = await prisma.student.findUnique({
@@ -17,9 +17,10 @@ export const GET = route(async (_req: Request, ctx: Ctx) => {
     include: { class: true, section: true, category: true, house: true, disReason: true },
   });
   if (!student) throw new ApiError(404, "Student not found.");
+  assertSameSchool(context, (student as any).schoolId);
 
   const [fees, attendance, results, leaves, payments, transport, hostel] = await Promise.all([
-    getStudentFees(id),
+    getStudentFees(id, context.school.id),
     prisma.studentAttendance.findMany({
       where: { studentId: id },
       orderBy: { date: "desc" },

@@ -1,10 +1,10 @@
 import { route } from "@/lib/http";
-import { requirePermission } from "@/lib/auth";
+import { requireSchoolPermission } from "@/lib/tenant";
 import { pendingFees } from "@/lib/fees";
 
 export const GET = route(async () => {
-  await requirePermission("fees");
-  const items = await pendingFees();
+  const context = await requireSchoolPermission("fees.read");
+  const items = await pendingFees(context.school.id);
   return {
     items: items.map((i) => ({
       studentId: i.student.id,

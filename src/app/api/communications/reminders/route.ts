@@ -1,8 +1,8 @@
 import { route } from "@/lib/http";
-import { requirePermission } from "@/lib/auth";
+import { requireSchoolPermission } from "@/lib/tenant";
 import { runFeeReminders } from "@/lib/communications";
 
 export const POST = route(async () => {
-  const user = await requirePermission("comm");
-  return runFeeReminders(user.username);
+  const context = await requireSchoolPermission("communication.create");
+  return runFeeReminders(context.user.username, context.school.id);
 });

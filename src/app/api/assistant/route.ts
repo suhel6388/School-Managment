@@ -1,23 +1,38 @@
 import { prisma } from "@/lib/prisma";
 import { readJson, route } from "@/lib/http";
-import { requireUser } from "@/lib/auth";
+import { requireSchoolMembership } from "@/lib/rbac";
 import { pendingFees } from "@/lib/fees";
 import { todayAttendanceSummary } from "@/lib/attendance";
 import { toYmd } from "@/lib/dates";
+import { modelHasSchoolId } from "@/lib/tenant";
 
 export const POST = route(async (req) => {
-  await requireUser();
+  const context = await requireSchoolMembership();
+  const schoolId = context.school.id;
+
   const body = await readJson(req);
   const q = String(body.q ?? "").trim().toLowerCase();
   if (!q) return { answer: "Ask me about fees, students, staff, attendance, exams or events.", links: [] };
 
+  const studentWhere: Record<string, unknown> = { status: "active" };
+  if (schoolId && modelHasSchoolId("Student")) studentWhere.schoolId = schoolId;
+
+  const staffWhere: Record<string, unknown> = { status: "active" };
+  if (schoolId && modelHasSchoolId("Staff")) staffWhere.schoolId = schoolId;
+
+  const classWhere: Record<string, unknown> = {};
+  if (schoolId && modelHasSchoolId("SchoolClass")) classWhere.schoolId = schoolId;
+
+  const eventWhere: Record<string, unknown> = {};
+  if (schoolId && modelHasSchoolId("SchoolEvent")) eventWhere.schoolId = schoolId;
+
   const [students, staff, classes, pending, attendance, events] = await Promise.all([
-    prisma.student.count({ where: { status: "active" } }),
-    prisma.staff.count({ where: { status: "active" } }),
-    prisma.schoolClass.findMany({ orderBy: { order: "asc" } }),
-    pendingFees(),
-    todayAttendanceSummary(),
-    prisma.schoolEvent.findMany({ orderBy: { date: "asc" }, take: 5 }),
+    prisma.student.count({ where: studentWhere }),
+    prisma.staff.count({ where: staffWhere }),
+    prisma.schoolClass.findMany({ where: classWhere, orderBy: { order: "asc" } }),
+    pendingFees(schoolId),
+    todayAttendanceSummary(schoolId),
+    prisma.schoolEvent.findMany({ where: eventWhere, orderBy: { date: "asc" }, take: 5 }),
   ]);
 
   const links: { label: string; href: string }[] = [];
@@ -43,7 +58,7 @@ export const POST = route(async (req) => {
     const match = classes.find((c) => q.includes(c.name.toLowerCase()));
     if (match) {
       const count = await prisma.student.count({
-        where: { classId: match.id, status: "active" },
+        where: { classId: match.id, status: "active", ...(schoolId && modelHasSchoolId("Student") ? { schoolId } : {}) },
       });
       return { answer: `${match.name} has ${count} active students.`, links };
     }

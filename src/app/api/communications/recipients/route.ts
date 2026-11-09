@@ -1,14 +1,14 @@
 import { query, route } from "@/lib/http";
-import { requirePermission } from "@/lib/auth";
+import { requireSchoolPermission } from "@/lib/tenant";
 import { audienceOptions, getRecipients } from "@/lib/communications";
 
 export const GET = route(async (req) => {
-  await requirePermission("comm");
+  const context = await requireSchoolPermission("communication.read");
   const params = query(req);
   const audience = params.get("audience") ?? "";
   const [options, recipients] = await Promise.all([
-    audienceOptions(),
-    audience ? getRecipients(audience) : Promise.resolve([]),
+    audienceOptions(context.school.id),
+    audience ? getRecipients(audience, 200, context.school.id) : Promise.resolve([]),
   ]);
   return { ...options, recipients: recipients.slice(0, 50), count: recipients.length };
 });
