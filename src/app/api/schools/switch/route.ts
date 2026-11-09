@@ -16,3 +16,4 @@ export const POST = route(async (req) => {
   const result = await switchActiveSchool(user.uid, targetSchoolId);
   return result;
 });
+

@@ -30,3 +30,4 @@ export const POST = route(async (req) => {
 
   return result;
 });
+

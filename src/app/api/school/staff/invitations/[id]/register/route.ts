@@ -13,3 +13,4 @@ export const POST = route(async (req: Request, ctx: Ctx) => {
 
   return registerAndAcceptInvitation(id, body);
 });
+

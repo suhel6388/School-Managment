@@ -406,6 +406,8 @@ export async function requireSchoolPermission(
   return context;
 }
 
+export { isSuperAdmin } from "./rbac";
+
 /**
  * Guards a record id that belongs to a school. The caller passes the id of the
  * record it is about to read/write; it must match the server-resolved school.

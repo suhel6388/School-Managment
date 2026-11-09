@@ -474,6 +474,18 @@ export function AppShell({
                     Switch school ({memberships.length})
                   </div>
                 ) : null}
+                {(user.role === "super_admin" || user.role === "Admin") && (
+                  <div
+                    className="it"
+                    style={{ color: "var(--pri, #2563eb)", fontWeight: 700 }}
+                    onClick={() => {
+                      router.push("/super-admin");
+                      setPop(null);
+                    }}
+                  >
+                    Platform Super Admin
+                  </div>
+                )}
                 <div className="it" onClick={() => { router.push("/set_general"); setPop(null); }}>
                   School settings
                 </div>

@@ -42,13 +42,21 @@ export async function authenticateUser(req?: Request): Promise<SessionUser> {
  */
 export async function requireSuperAdmin(req?: Request): Promise<SessionUser> {
   const user = await authenticateUser(req);
-  const normalized = normalizeRole(user.role);
-  if (normalized !== "super_admin" && user.role !== "Admin") {
+  if (!isSuperAdmin(user)) {
     throw new ApiError(403, "Access restricted to platform super administrators.", {
       code: "FORBIDDEN_SUPER_ADMIN",
     });
   }
   return user;
+}
+
+/**
+ * Checks whether the given session user has platform-level super administrator access.
+ */
+export function isSuperAdmin(user?: SessionUser | null): boolean {
+  if (!user) return false;
+  const normalized = normalizeRole(user.role);
+  return normalized === "super_admin" || user.role === "Admin";
 }
 
 /**

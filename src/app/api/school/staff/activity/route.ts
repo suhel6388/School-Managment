@@ -12,3 +12,4 @@ export const GET = route(async (req) => {
   const logs = await getStaffActivityLogs(context.school.id, { staffEmail, limit });
   return { logs };
 });
+

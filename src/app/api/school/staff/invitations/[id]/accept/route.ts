@@ -16,3 +16,4 @@ export const POST = route(async (_req: Request, ctx: Ctx) => {
     name: user.name,
   });
 });
+

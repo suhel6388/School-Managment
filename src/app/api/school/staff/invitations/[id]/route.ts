@@ -15,3 +15,4 @@ export const DELETE = route(async (_req: Request, ctx: Ctx) => {
   const { id } = await ctx.params;
   return cancelInvitation(context.school.id, id, context.user);
 });
+

@@ -34,3 +34,4 @@ export const DELETE = route(async (_req: Request, ctx: Ctx) => {
   const { id: memberId } = await ctx.params;
   return removeStaffMember(context.school.id, memberId, context.user);
 });
+
