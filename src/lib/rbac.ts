@@ -150,6 +150,36 @@ export function hasPermission(
   return checkPermission(userOrRole, permission);
 }
 
+/**
+ * 6. assertTeacherClassAccess
+ *
+ * Ensures that teachers can only access classes assigned to them.
+ * Platform super admins, school owners, and school admins have full operational access.
+ * If a teacher attempts to access an unassigned class, throws 403.
+ */
+export async function assertTeacherClassAccess(
+  context: SchoolContext,
+  classId: string,
+  assignedClassIds: string[] = [],
+): Promise<void> {
+  const role = normalizeRole(context.role);
+  if (role === "super_admin" || role === "owner" || role === "admin") {
+    return;
+  }
+  if (role === "teacher") {
+    if (!assignedClassIds.includes(classId)) {
+      throw new ApiError(403, "Access restricted: Teachers may only access assigned classes.", {
+        code: "UNASSIGNED_CLASS_ACCESS_DENIED",
+        classId,
+      });
+    }
+    return;
+  }
+  throw new ApiError(403, "Your school role does not allow class operations.", {
+    code: "PERMISSION_DENIED",
+  });
+}
+
 export {
   withTenant,
   withSchoolContext,

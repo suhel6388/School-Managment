@@ -240,6 +240,7 @@ export function isTenantScopedModel(modelName: string): boolean {
  * Checks if the model currently defines a schoolId field in the active schema.
  */
 export function modelHasSchoolId(modelName: string): boolean {
+  if (isTenantScopedModel(modelName)) return true;
   try {
     const meta = modelMeta(modelName);
     return meta.fields.some((f) => f.name === "schoolId");
@@ -406,7 +407,7 @@ export async function requireSchoolPermission(
   return context;
 }
 
-export { isSuperAdmin } from "./rbac";
+export { isSuperAdmin, assertTeacherClassAccess } from "./rbac";
 
 /**
  * Guards a record id that belongs to a school. The caller passes the id of the
