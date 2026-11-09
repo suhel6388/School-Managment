@@ -12,6 +12,15 @@ function baseUrl(): string {
   return (process.env.BETTER_AUTH_URL ?? "http://localhost:3000").replace(/\/+$/, "");
 }
 
+export type StaffOperator = {
+  id?: string;
+  uid?: string;
+  username: string;
+  name?: string;
+  role?: string;
+  email?: string;
+};
+
 export type StaffMemberRecord = {
   id: string;
   userId: string;
@@ -147,7 +156,7 @@ export async function getInvitationById(
  */
 export async function inviteStaffMember(
   schoolId: string,
-  inviter: SessionUser,
+  inviter: StaffOperator,
   input: { email: string; role: string; name?: string },
   db: any = prisma,
 ) {
@@ -191,6 +200,7 @@ export async function inviteStaffMember(
   });
 
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+  const inviterId = inviter.uid ?? inviter.id!;
 
   let invitation: any;
   if (existingInvitation) {
@@ -199,7 +209,7 @@ export async function inviteStaffMember(
       data: {
         role,
         expiresAt,
-        inviterId: inviter.uid,
+        inviterId,
       },
     });
   } else {
@@ -210,7 +220,7 @@ export async function inviteStaffMember(
         role,
         status: "pending",
         expiresAt,
-        inviterId: inviter.uid,
+        inviterId,
       },
     });
   }
@@ -265,7 +275,7 @@ export async function inviteStaffMember(
 export async function cancelInvitation(
   schoolId: string,
   invitationId: string,
-  operator: SessionUser,
+  operator: StaffOperator,
   db: any = prisma,
 ) {
   const invitation = await db.invitation.findFirst({
@@ -468,7 +478,7 @@ export async function updateStaffRole(
   schoolId: string,
   memberId: string,
   newRole: string,
-  operator: SessionUser,
+  operator: StaffOperator,
   db: any = prisma,
 ) {
   const member = await db.member.findFirst({
@@ -504,13 +514,15 @@ export async function updateStaffRole(
   });
 
   // Sync Staff profile role if exists
-  await db.staff.updateMany({
-    where: {
-      email: member.user.email,
-      ...(modelHasSchoolId("Staff") ? { schoolId } : {}),
-    },
-    data: { role },
-  });
+  if (member.user?.email) {
+    await db.staff.updateMany({
+      where: {
+        email: member.user.email,
+        ...(modelHasSchoolId("Staff") ? { schoolId } : {}),
+      },
+      data: { role },
+    });
+  }
 
   if (modelHasSchoolId("AuditLog")) {
     await db.auditLog.create({
@@ -519,7 +531,7 @@ export async function updateStaffRole(
         user: operator.username,
         act: "update_role",
         entity: "staff",
-        description: `Changed role of ${member.user.email} to ${role}`,
+        description: `Changed role of ${member.user?.email ?? member.userId} to ${role}`,
       },
     });
   }
@@ -534,7 +546,7 @@ export async function updateStaffStatus(
   schoolId: string,
   memberId: string,
   status: "active" | "inactive",
-  operator: SessionUser,
+  operator: StaffOperator,
   db: any = prisma,
 ) {
   const member = await db.member.findFirst({
@@ -559,13 +571,15 @@ export async function updateStaffStatus(
   });
 
   // Update staff profile status
-  await db.staff.updateMany({
-    where: {
-      email: member.user.email,
-      ...(modelHasSchoolId("Staff") ? { schoolId } : {}),
-    },
-    data: { status },
-  });
+  if (member.user?.email) {
+    await db.staff.updateMany({
+      where: {
+        email: member.user.email,
+        ...(modelHasSchoolId("Staff") ? { schoolId } : {}),
+      },
+      data: { status },
+    });
+  }
 
   if (modelHasSchoolId("AuditLog")) {
     await db.auditLog.create({
@@ -574,7 +588,7 @@ export async function updateStaffStatus(
         user: operator.username,
         act: status === "active" ? "activate" : "deactivate",
         entity: "staff",
-        description: `${status === "active" ? "Activated" : "Deactivated"} ${member.user.email}`,
+        description: `${status === "active" ? "Activated" : "Deactivated"} ${member.user?.email ?? member.userId}`,
       },
     });
   }
@@ -588,7 +602,7 @@ export async function updateStaffStatus(
 export async function removeStaffMember(
   schoolId: string,
   memberId: string,
-  operator: SessionUser,
+  operator: StaffOperator,
   db: any = prisma,
 ) {
   const member = await db.member.findFirst({
@@ -624,7 +638,7 @@ export async function removeStaffMember(
         user: operator.username,
         act: "remove",
         entity: "staff",
-        description: `Removed staff access for ${member.user.email}`,
+        description: `Removed staff access for ${member.user?.email ?? member.userId}`,
       },
     });
   }
@@ -710,9 +724,9 @@ export async function switchActiveSchool(
   return {
     success: true,
     school: {
-      id: membership.school.id,
-      name: membership.school.name,
-      slug: membership.school.slug,
+      id: membership.school?.id ?? membership.schoolId,
+      name: membership.school?.name ?? "School",
+      slug: membership.school?.slug ?? "school",
       role: normalizeRole(membership.role),
     },
   };

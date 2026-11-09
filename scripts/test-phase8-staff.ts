@@ -56,7 +56,7 @@ async function main() {
           }));
       },
       findFirst: async ({ where }: any) => {
-        return mockDbRecords.members.find((m) => {
+        const found = mockDbRecords.members.find((m) => {
           if (where.id && m.id !== where.id) return false;
           if (where.schoolId && m.schoolId !== where.schoolId) return false;
           if (where.userId && m.userId !== where.userId) return false;
@@ -66,7 +66,13 @@ async function main() {
             if (user?.email !== where.user.email) return false;
           }
           return true;
-        }) ?? null;
+        });
+        if (!found) return null;
+        return {
+          ...found,
+          user: mockDbRecords.users.find((u) => u.id === found.userId),
+          school: mockDbRecords.schools.find((s) => s.id === found.schoolId),
+        };
       },
       count: async ({ where }: any) => {
         return mockDbRecords.members.filter((m) => {
@@ -294,11 +300,13 @@ async function main() {
   // Deactivate Bob
   await updateStaffStatus("school-alpha", "m-2", "inactive", ownerUser, mockDb);
   const bobMember = mockDbRecords.members.find((m) => m.id === "m-2");
+  assert(bobMember);
   assert.equal(bobMember.status, "inactive");
   console.log("✔ Staff member deactivated.");
 
   // Reactivate Bob
   await updateStaffStatus("school-alpha", "m-2", "active", ownerUser, mockDb);
+  assert(bobMember);
   assert.equal(bobMember.status, "active");
   console.log("✔ Staff member reactivated.");
 
@@ -365,7 +373,7 @@ async function main() {
     (err: unknown) => {
       assert(err instanceof ApiError);
       assert.equal(err.status, 403);
-      assert.equal(err.details?.code, "FORBIDDEN_SCHOOL_ACCESS");
+      assert.equal((err.details as any)?.code, "FORBIDDEN_SCHOOL_ACCESS");
       return true;
     },
   );
