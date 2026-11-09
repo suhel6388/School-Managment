@@ -3,6 +3,7 @@ import { getSessionUser, rolePermissions } from "@/lib/auth";
 import { getSettings } from "@/lib/settings";
 import { uiPermissionsForRole } from "@/lib/permissions";
 import { resolveSchoolContext } from "@/lib/tenant";
+import { getBetterAuthIdentity } from "@/lib/session";
 import { AppShell } from "@/components/AppShell";
 import { ToastProvider } from "@/components/ToastProvider";
 import { LookupProvider } from "@/components/LookupProvider";
@@ -23,8 +24,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       const context = await resolveSchoolContext();
       if (context) school = { name: context.school.name, session: settings.session };
     } catch {
-      // A user with multiple schools and no active selection still reaches the
-      // shell; API calls and /api/tenant/context report that selection is needed.
+      const identity = await getBetterAuthIdentity();
+      if (
+        identity &&
+        identity.memberships.length === 0 &&
+        user.role !== "Admin" &&
+        user.role !== "super_admin"
+      ) {
+        redirect("/onboarding");
+      }
     }
   }
 
