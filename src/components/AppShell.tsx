@@ -206,13 +206,18 @@ export function AppShell({
   async function selectSchool(schoolId: string) {
     setSwitchingSchool(true);
     try {
-      const res = await fetch("/api/auth/organization/set-active", {
+      const res = await fetch("/api/schools/switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ organizationId: schoolId }),
+        body: JSON.stringify({ schoolId }),
       });
       if (!res.ok) {
-        throw new Error("Failed to switch school.");
+        const authRes = await fetch("/api/auth/organization/set-active", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ organizationId: schoolId }),
+        });
+        if (!authRes.ok) throw new Error("Failed to switch school.");
       }
       window.location.reload();
     } catch (err) {

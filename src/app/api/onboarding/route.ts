@@ -8,3 +8,4 @@ export const POST = route(async (req) => {
   const result = await onboardSchool(body, { currentUser });
   return result;
 });
+

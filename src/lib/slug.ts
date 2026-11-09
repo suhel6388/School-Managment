@@ -9,3 +9,4 @@ export function generateSchoolSlug(name: string): string {
     .replace(/^-+|-+$/g, "");
   return base || "school";
 }
+
